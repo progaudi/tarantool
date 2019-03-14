@@ -353,6 +353,24 @@ set(ICU_FIND_REQUIRED ON)
 find_package(ICU)
 
 #
+# OpenLdap
+#
+
+if(ENABLE_OPENLDAP)
+    set(Ldap_FIND_REQUIRED ON)
+    find_package(Ldap)
+endif()
+
+#
+# Sasl
+#
+
+if(ENABLE_SASL)
+    set(Sasl_FIND_REQUIRED ON)
+    find_package(Sasl)
+endif()
+
+#
 # LuaJIT
 #
 # Patched.

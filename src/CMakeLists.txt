@@ -13,6 +13,8 @@ include_directories(${MSGPUCK_INCLUDE_DIRS})
 include_directories(${CURL_INCLUDE_DIRS})
 include_directories(${ICU_INCLUDE_DIRS})
 include_directories(${ICONV_INCLUDE_DIRS})
+include_directories(${LDAP_INCLUDE_DIRS})
+include_directories(${SASL_INCLUDE_DIRS})
 
 set(LIBUTIL_FREEBSD_SRC ${CMAKE_SOURCE_DIR}/third_party/libutil_freebsd)
 include_directories(${LIBUTIL_FREEBSD_SRC})
@@ -244,6 +246,8 @@ set (common_libraries
     ${CURL_LIBRARIES}
     ${ICONV_LIBRARIES}
     ${OPENSSL_LIBRARIES}
+    ${LDAP_LIBRARIES}
+    ${SASL_LIBRARIES}
 )
 
 if (TARGET_OS_LINUX OR TARGET_OS_DEBIAN_FREEBSD)
@@ -277,7 +281,10 @@ if(BUILD_STATIC)
             ${READLINE_LIBRARIES}
             ${CURL_LIBRARIES}
             ${OPENSSL_LIBRARIES}
-            ${ICU_LIBRARIES})
+            ${ICU_LIBRARIES}
+            ${LDAP_LIBRARIES}
+            ${SASL_LIBRARIES}
+            )
         if (${libstatic} MATCHES "lib[^/]+.a")
             string(REGEX MATCH "lib[^/]+.a" libname ${libstatic})
             string(REGEX REPLACE "\\.a$" "" libname ${libname})

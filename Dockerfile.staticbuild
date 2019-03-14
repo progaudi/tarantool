@@ -69,6 +69,20 @@ RUN set -x && \
     ./configure --enable-static --enable-shared && \
     make && make install
 
+RUN set -x && \
+    LD_LIBRARY_PATH=/usr/local/lib64 curl -O -L https://github.com/cyrusimap/cyrus-sasl/releases/download/cyrus-sasl-2.1.27/cyrus-sasl-2.1.27.tar.gz && \
+    tar -xvf cyrus-sasl-2.1.27.tar.gz && \
+    cd cyrus-sasl-2.1.27 && \
+    LD_LIBRARY_PATH=/usr/local/lib64 LIBS=" -lssl -lcrypto -ldl" ./configure --enable-static --enable-shared  --enable-krb4 --prefix /usr && \
+    make && make install
+
+RUN set -x && \
+    LD_LIBRARY_PATH=/usr/local/lib64 curl -O -L http://mirror.eu.oneandone.net/software/openldap/openldap-release/openldap-2.4.47.tgz && \
+    tar -xvf openldap-2.4.47.tgz && \
+    cd openldap-2.4.47 && \
+    LD_LIBRARY_PATH=/usr/local/lib64 LIBS=" -lssl -lcrypto -ldl" ./configure --enable-static --enable-shared --disable-slapd --with-cyrus-sasl && \
+    make && make install
+
 COPY . /tarantool
 
 RUN set -x && \
@@ -82,8 +96,12 @@ RUN set -x \
              -DENABLE_DIST:BOOL=ON \
              -DBUILD_STATIC=ON \
              -DOPENSSL_USE_STATIC_LIBS=ON \
-             .) \
-    && make -C /tarantool -j
+             -DENABLE_OPENLDAP=ON \
+             -DENABLE_SASL=ON \
+             -DOPENLDAP_USE_STATIC_LIBS=ON \
+    .)
+
+RUN make -C /tarantool -j
 
 RUN cd /tarantool && make install
 
