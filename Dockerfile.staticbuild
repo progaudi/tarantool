@@ -98,7 +98,6 @@ RUN set -x \
              -DOPENSSL_USE_STATIC_LIBS=ON \
              -DENABLE_OPENLDAP=ON \
              -DENABLE_SASL=ON \
-             -DOPENLDAP_USE_STATIC_LIBS=ON \
     .)
 
 RUN make -C /tarantool -j

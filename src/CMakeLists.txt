@@ -237,17 +237,19 @@ target_link_libraries(server core bit uri uuid ${ICU_LIBRARIES})
 # Rule of thumb: if exporting a symbol from a static library, list the
 # library here.
 set (reexport_libraries server core misc bitset csv
-     ${LUAJIT_LIBRARIES} ${MSGPUCK_LIBRARIES} ${ICU_LIBRARIES})
+    ${LUAJIT_LIBRARIES}
+    ${MSGPUCK_LIBRARIES}
+    ${ICU_LIBRARIES}
+    ${LDAP_LIBRARIES}
+)
 
 set (common_libraries
-    ${reexport_libraries}
     ${LIBYAML_LIBRARIES}
     ${READLINE_LIBRARIES}
     ${CURL_LIBRARIES}
     ${ICONV_LIBRARIES}
-    ${OPENSSL_LIBRARIES}
-    ${LDAP_LIBRARIES}
     ${SASL_LIBRARIES}
+    ${OPENSSL_LIBRARIES}
 )
 
 if (TARGET_OS_LINUX OR TARGET_OS_DEBIAN_FREEBSD)
