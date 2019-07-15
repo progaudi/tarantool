@@ -43,6 +43,7 @@
 #include "cbus.h"
 #include "coio_task.h"
 #include "replication.h"
+#include "wal_mem.h"
 
 enum {
 	/**
@@ -156,6 +157,8 @@ struct wal_writer
 	 * Used for replication relays.
 	 */
 	struct rlist watchers;
+	/** Wal memory buffer. */
+	struct wal_mem wal_mem;
 };
 
 struct wal_msg {
@@ -905,6 +908,7 @@ wal_assign_lsn(struct vclock *vclock_diff, struct vclock *base,
 	int64_t tsn = 0;
 	/** Assign LSN to all local rows. */
 	for ( ; row < end; row++) {
+		(*row)->tm = ev_now(loop());
 		if ((*row)->replica_id == 0) {
 			(*row)->lsn = vclock_inc(vclock_diff, instance_id) +
 				      vclock_get(base, instance_id);
@@ -988,25 +992,37 @@ wal_write_to_disk(struct cmsg *msg)
 	int rc;
 	struct journal_entry *entry;
 	struct stailq_entry *last_committed = NULL;
+	wal_mem_svp(&writer->wal_mem, &writer->vclock);
 	stailq_foreach_entry(entry, &wal_msg->commit, fifo) {
 		wal_assign_lsn(&vclock_diff, &writer->vclock,
 			       entry->rows, entry->rows + entry->n_rows);
 		entry->res = vclock_sum(&vclock_diff) +
 			     vclock_sum(&writer->vclock);
-		rc = xlog_write_entry(l, entry);
-		if (rc < 0)
+		if (wal_mem_write(&writer->wal_mem, entry->rows,
+				  entry->rows + entry->n_rows) < 0) {
+			wal_mem_svp_reset(&writer->wal_mem);
 			goto done;
-		if (rc > 0) {
-			writer->checkpoint_wal_size += rc;
-			last_committed = &entry->fifo;
-			vclock_merge(&writer->vclock, &vclock_diff);
 		}
-		/* rc == 0: the write is buffered in xlog_tx */
 	}
-	rc = xlog_flush(l);
-	if (rc < 0)
-		goto done;
 
+	struct iovec iov[SMALL_OBUF_IOV_MAX];
+	int iovcnt;
+	iovcnt = wal_mem_svp_data(&writer->wal_mem, iov);
+	xlog_tx_begin(l);
+	if (xlog_write_iov(l, iov, iovcnt,
+			   wal_mem_svp_row_count(&writer->wal_mem)) < 0) {
+		xlog_tx_rollback(l);
+		wal_mem_svp_reset(&writer->wal_mem);
+		goto done;
+	}
+	rc = xlog_tx_commit(l);
+	if (rc == 0)
+		/* Data is buffered but not yet flushed. */
+		rc = xlog_flush(l);
+	if (rc < 0) {
+		wal_mem_svp_reset(&writer->wal_mem);
+		goto done;
+	}
 	writer->checkpoint_wal_size += rc;
 	last_committed = stailq_last(&wal_msg->commit);
 	vclock_merge(&writer->vclock, &vclock_diff);
@@ -1074,6 +1090,7 @@ wal_writer_f(va_list ap)
 {
 	(void) ap;
 	struct wal_writer *writer = &wal_writer_singleton;
+	wal_mem_create(&writer->wal_mem);
 
 	/** Initialize eio in this thread */
 	coio_enable();
@@ -1113,6 +1130,7 @@ wal_writer_f(va_list ap)
 		xlog_close(&vy_log_writer.xlog, false);
 
 	cpipe_destroy(&writer->tx_prio_pipe);
+	wal_mem_destroy(&writer->wal_mem);
 	return 0;
 }
 

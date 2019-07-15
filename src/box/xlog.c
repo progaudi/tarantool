@@ -1275,14 +1275,8 @@ xlog_tx_write(struct xlog *log)
 	return written;
 }
 
-/*
- * Add a row to a log and possibly flush the log.
- *
- * @retval  -1 error, check diag.
- * @retval >=0 the number of bytes written to buffer.
- */
-ssize_t
-xlog_write_row(struct xlog *log, const struct xrow_header *packet)
+static int
+xlog_write_prepare(struct xlog *log)
 {
 	/*
 	 * Automatically reserve space for a fixheader when adding
@@ -1296,17 +1290,17 @@ xlog_write_row(struct xlog *log, const struct xrow_header *packet)
 			return -1;
 		}
 	}
+	return 0;
+}
 
+/*
+ * Append iov to a log internal buffer.
+ */
+static ssize_t
+xlog_writev(struct xlog *log, struct iovec *iov, int iovcnt)
+{
 	struct obuf_svp svp = obuf_create_svp(&log->obuf);
-	size_t page_offset = obuf_size(&log->obuf);
-	/** encode row into iovec */
-	struct iovec iov[XROW_IOVMAX];
-	/** don't write sync to the disk */
-	int iovcnt = xrow_header_encode(packet, 0, iov, 0);
-	if (iovcnt < 0) {
-		obuf_rollback_to_svp(&log->obuf, &svp);
-		return -1;
-	}
+	size_t old_size = obuf_size(&log->obuf);
 	for (int i = 0; i < iovcnt; ++i) {
 		struct errinj *inj = errinj(ERRINJ_WAL_WRITE_PARTIAL,
 					    ERRINJ_INT);
@@ -1325,10 +1319,33 @@ xlog_write_row(struct xlog *log, const struct xrow_header *packet)
 			return -1;
 		}
 	}
+	return obuf_size(&log->obuf) - old_size;
+}
+
+/*
+ * Add a row to a log and possibly flush the log.
+ *
+ * @retval  -1 error, check diag.
+ * @retval >=0 the number of bytes written to buffer.
+ */
+ssize_t
+xlog_write_row(struct xlog *log, const struct xrow_header *packet)
+{
+	if (xlog_write_prepare(log) != 0)
+		return -1;
+
+	/** encode row into iovec */
+	struct iovec iov[XROW_IOVMAX];
+	/** don't write sync to the disk */
+	int iovcnt = xrow_header_encode(packet, 0, iov, 0);
+	if (iovcnt < 0)
+		return -1;
 	assert(iovcnt <= XROW_IOVMAX);
+	ssize_t row_size = xlog_writev(log, iov, iovcnt);
+	if (row_size < 0)
+		return -1;
 	log->tx_rows++;
 
-	size_t row_size = obuf_size(&log->obuf) - page_offset;
 	if (log->is_autocommit &&
 	    obuf_size(&log->obuf) >= XLOG_TX_AUTOCOMMIT_THRESHOLD &&
 	    xlog_tx_write(log) < 0)
@@ -1337,6 +1354,30 @@ xlog_write_row(struct xlog *log, const struct xrow_header *packet)
 	return row_size;
 }
 
+/*
+ * Add an io vector to a log and possibly flush the log.
+ *
+ * @retval  -1 error, check diag.
+ * @retval >=0 the number of bytes written to buffer.
+ */
+ssize_t
+xlog_write_iov(struct xlog *log, struct iovec *iov, int iovcnt, int rows)
+{
+	if (xlog_write_prepare(log) != 0)
+		return -1;
+
+	ssize_t row_size = xlog_writev(log, iov, iovcnt);
+	if (row_size < 0)
+		return -1;
+	log->tx_rows += rows;
+
+	if (log->is_autocommit &&
+	    obuf_size(&log->obuf) >= XLOG_TX_AUTOCOMMIT_THRESHOLD &&
+	    xlog_tx_write(log) < 0)
+		return -1;
+
+	return row_size;
+}
 /**
  * Begin a multi-statement xlog transaction. All xrow objects
  * of a single transaction share the same header and checksum

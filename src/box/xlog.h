@@ -502,6 +502,15 @@ ssize_t
 xlog_write_row(struct xlog *log, const struct xrow_header *packet);
 
 /**
+ * Write a io vector to xlog,
+ *
+ * @retval count of writen bytes
+ * @retval -1 for error
+ */
+ssize_t
+xlog_write_iov(struct xlog *xlog, struct iovec *iov, int iovcnt, int rows);
+
+/**
  * Prevent xlog row buffer offloading, should be use
  * at transaction start to write transaction in one xlog tx
  */
