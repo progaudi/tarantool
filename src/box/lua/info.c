@@ -416,12 +416,9 @@ lbox_info_gc_call(struct lua_State *L)
 	lua_pushstring(L, "consumers");
 	lua_newtable(L);
 
-	struct gc_consumer_iterator consumers;
-	gc_consumer_iterator_init(&consumers);
-
 	count = 0;
-	struct gc_consumer *consumer;
-	while ((consumer = gc_consumer_iterator_next(&consumers)) != NULL) {
+	struct gc_consumer *consumer = NULL;
+	while ((consumer = gc_consumer_next(consumer)) != NULL) {
 		lua_createtable(L, 0, 3);
 
 		lua_pushstring(L, "name");

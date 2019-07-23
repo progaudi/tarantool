@@ -49,8 +49,6 @@ struct gc_consumer;
 
 enum { GC_NAME_MAX = 64 };
 
-typedef rb_node(struct gc_consumer) gc_node_t;
-
 /**
  * Garbage collector keeps track of all preserved checkpoints.
  * The following structure represents a checkpoint.
@@ -87,7 +85,7 @@ struct gc_checkpoint_ref {
  */
 struct gc_consumer {
 	/** Link in gc_state::consumers. */
-	gc_node_t node;
+	struct rlist in_consumers;
 	/** Human-readable name. */
 	char name[GC_NAME_MAX];
 	/** The vclock tracked by this consumer. */
@@ -122,7 +120,7 @@ struct gc_state {
 	 */
 	struct rlist checkpoints;
 	/** Registered consumers, linked by gc_consumer::node. */
-	gc_tree_t consumers;
+	struct rlist consumers;
 	/** Fiber responsible for periodic checkpointing. */
 	struct fiber *checkpoint_fiber;
 	/** Schedule of periodic checkpoints. */
@@ -311,27 +309,12 @@ void
 gc_consumer_advance(struct gc_consumer *consumer, const struct vclock *vclock);
 
 /**
- * Iterator over registered consumers. The iterator is valid
- * as long as the caller doesn't yield.
- */
-struct gc_consumer_iterator {
-	struct gc_consumer *curr;
-};
-
-/** Init an iterator over consumers. */
-static inline void
-gc_consumer_iterator_init(struct gc_consumer_iterator *it)
-{
-	it->curr = NULL;
-}
-
-/**
  * Iterate to the next registered consumer. Return a pointer
  * to the next consumer object or NULL if there is no more
  * consumers.
  */
 struct gc_consumer *
-gc_consumer_iterator_next(struct gc_consumer_iterator *it);
+gc_consumer_next(struct gc_consumer *consumer);
 
 #if defined(__cplusplus)
 } /* extern "C" */

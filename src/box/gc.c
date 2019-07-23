@@ -66,27 +66,6 @@ gc_cleanup_fiber_f(va_list);
 static int
 gc_checkpoint_fiber_f(va_list);
 
-/**
- * Comparator used for ordering gc_consumer objects by signature
- * in a binary tree.
- */
-static inline int
-gc_consumer_cmp(const struct gc_consumer *a, const struct gc_consumer *b)
-{
-	if (vclock_sum(&a->vclock) < vclock_sum(&b->vclock))
-		return -1;
-	if (vclock_sum(&a->vclock) > vclock_sum(&b->vclock))
-		return 1;
-	if ((intptr_t)a < (intptr_t)b)
-		return -1;
-	if ((intptr_t)a > (intptr_t)b)
-		return 1;
-	return 0;
-}
-
-rb_gen(MAYBE_UNUSED static inline, gc_tree_, gc_tree_t,
-       struct gc_consumer, node, gc_consumer_cmp);
-
 /** Free a consumer object. */
 static void
 gc_consumer_delete(struct gc_consumer *consumer)
@@ -111,7 +90,7 @@ gc_init(void)
 
 	vclock_create(&gc.vclock);
 	rlist_create(&gc.checkpoints);
-	gc_tree_new(&gc.consumers);
+	rlist_create(&gc.consumers);
 	fiber_cond_create(&gc.cleanup_cond);
 	checkpoint_schedule_cfg(&gc.checkpoint_schedule, 0, 0);
 
@@ -143,14 +122,10 @@ gc_free(void)
 		gc_checkpoint_delete(checkpoint);
 	}
 	/* Free all registered consumers. */
-	struct gc_consumer *consumer = gc_tree_first(&gc.consumers);
-	while (consumer != NULL) {
-		struct gc_consumer *next = gc_tree_next(&gc.consumers,
-							consumer);
-		gc_tree_remove(&gc.consumers, consumer);
+	struct gc_consumer *consumer, *consumer_tmp;
+	rlist_foreach_entry_safe(consumer, &gc.consumers, in_consumers,
+				 consumer_tmp)
 		gc_consumer_delete(consumer);
-		consumer = next;
-	}
 }
 
 /**
@@ -192,14 +167,29 @@ gc_run_cleanup(void)
 	 * Note, we must keep all WALs created after the
 	 * oldest checkpoint, even if no consumer needs them.
 	 */
-	const struct vclock *vclock = (gc_tree_empty(&gc.consumers) ? NULL :
-				       &gc_tree_first(&gc.consumers)->vclock);
-	if (vclock == NULL ||
-	    vclock_sum(vclock) > vclock_sum(&checkpoint->vclock))
-		vclock = &checkpoint->vclock;
+	struct vclock min_vclock;
+	vclock_create(&min_vclock);
+	struct vclock_iterator it;
+	vclock_iterator_init(&it, &checkpoint->vclock);
+	vclock_foreach(&it, replica) {
+		struct gc_consumer *consumer;
+		rlist_foreach_entry(consumer, &gc.consumers, in_consumers) {
+			if (replica.lsn >
+			    vclock_get(&consumer->vclock, replica.id))
+				replica.lsn = vclock_get(&consumer->vclock,
+							 replica.id);
+		}
+		if (replica.lsn > 0)
+			vclock_follow(&min_vclock, replica.id, replica.lsn);
 
-	if (vclock_sum(vclock) > vclock_sum(&gc.vclock)) {
-		vclock_copy(&gc.vclock, vclock);
+	}
+	say_error("gc:");
+	say_error("\tchpt %s", vclock_to_string(&checkpoint->vclock));
+	say_error("\tmin %s", vclock_to_string(&min_vclock));
+	say_error("\tgc %s", vclock_to_string(&gc.vclock));
+
+	if (vclock_sum(&min_vclock) > vclock_sum(&gc.vclock)) {
+		vclock_copy(&gc.vclock, &min_vclock);
 		run_wal_gc = true;
 	}
 
@@ -222,7 +212,7 @@ gc_run_cleanup(void)
 	if (run_engine_gc)
 		engine_collect_garbage(&checkpoint->vclock);
 	if (run_wal_gc)
-		wal_collect_garbage(vclock);
+		wal_collect_garbage(&min_vclock);
 }
 
 static int
@@ -284,21 +274,6 @@ gc_advance(const struct vclock *vclock)
 	 * Bring the garbage collector vclock up to date.
 	 */
 	vclock_copy(&gc.vclock, vclock);
-
-	struct gc_consumer *consumer = gc_tree_first(&gc.consumers);
-	while (consumer != NULL &&
-	       vclock_sum(&consumer->vclock) < vclock_sum(vclock)) {
-		struct gc_consumer *next = gc_tree_next(&gc.consumers,
-							consumer);
-		assert(!consumer->is_inactive);
-		consumer->is_inactive = true;
-		gc_tree_remove(&gc.consumers, consumer);
-
-		say_crit("deactivated WAL consumer %s at %s", consumer->name,
-			 vclock_to_string(&consumer->vclock));
-
-		consumer = next;
-	}
 	gc_schedule_cleanup();
 }
 
@@ -530,7 +505,7 @@ gc_consumer_register(const struct vclock *vclock, const char *format, ...)
 	va_end(ap);
 
 	vclock_copy(&consumer->vclock, vclock);
-	gc_tree_insert(&gc.consumers, consumer);
+	rlist_add(&gc.consumers, &consumer->in_consumers);
 	return consumer;
 }
 
@@ -538,7 +513,7 @@ void
 gc_consumer_unregister(struct gc_consumer *consumer)
 {
 	if (!consumer->is_inactive) {
-		gc_tree_remove(&gc.consumers, consumer);
+		rlist_del(&consumer->in_consumers);
 		gc_schedule_cleanup();
 	}
 	gc_consumer_delete(consumer);
@@ -547,41 +522,20 @@ gc_consumer_unregister(struct gc_consumer *consumer)
 void
 gc_consumer_advance(struct gc_consumer *consumer, const struct vclock *vclock)
 {
-	if (consumer->is_inactive)
-		return;
-
-	int64_t signature = vclock_sum(vclock);
-	int64_t prev_signature = vclock_sum(&consumer->vclock);
-
-	assert(signature >= prev_signature);
-	if (signature == prev_signature)
-		return; /* nothing to do */
-
-	/*
-	 * Do not update the tree unless the tree invariant
-	 * is violated.
-	 */
-	struct gc_consumer *next = gc_tree_next(&gc.consumers, consumer);
-	bool update_tree = (next != NULL &&
-			    signature >= vclock_sum(&next->vclock));
-
-	if (update_tree)
-		gc_tree_remove(&gc.consumers, consumer);
-
 	vclock_copy(&consumer->vclock, vclock);
-
-	if (update_tree)
-		gc_tree_insert(&gc.consumers, consumer);
-
 	gc_schedule_cleanup();
 }
 
 struct gc_consumer *
-gc_consumer_iterator_next(struct gc_consumer_iterator *it)
+gc_consumer_next(struct gc_consumer *consumer)
 {
-	if (it->curr != NULL)
-		it->curr = gc_tree_next(&gc.consumers, it->curr);
-	else
-		it->curr = gc_tree_first(&gc.consumers);
-	return it->curr;
+	if (rlist_empty(&gc.consumers))
+		return NULL;
+	if (consumer == NULL)
+		return rlist_first_entry(&gc.consumers, struct gc_consumer,
+					 in_consumers);
+	if (consumer == rlist_last_entry(&gc.consumers, struct gc_consumer,
+					 in_consumers))
+		return NULL;
+	return rlist_next_entry(consumer, in_consumers);
 }

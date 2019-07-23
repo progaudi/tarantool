@@ -695,7 +695,6 @@ wal_collect_garbage_f(struct cbus_call_msg *data)
 	if (vclock != NULL)
 		xdir_collect_garbage(&writer->wal_dir, vclock_sum(vclock),
 				     XDIR_GC_ASYNC);
-
 	return 0;
 }
 
