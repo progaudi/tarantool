@@ -965,19 +965,11 @@ xdir_touch_xlog(struct xdir *dir, const struct vclock *vclock)
  */
 int
 xdir_create_xlog(struct xdir *dir, struct xlog *xlog,
-		 const struct vclock *vclock)
+		 const struct vclock *vclock, const struct vclock *prev_vclock)
 {
 	int64_t signature = vclock_sum(vclock);
 	assert(signature >= 0);
 	assert(!tt_uuid_is_nil(dir->instance_uuid));
-
-	/*
-	 * For WAL dir: store vclock of the previous xlog file
-	 * to check for gaps on recovery.
-	 */
-	const struct vclock *prev_vclock = NULL;
-	if (dir->type == XLOG && !vclockset_empty(&dir->index))
-		prev_vclock = vclockset_last(&dir->index);
 
 	struct xlog_meta meta;
 	xlog_meta_create(&meta, dir->filetype, dir->instance_uuid,

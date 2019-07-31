@@ -1649,7 +1649,8 @@ box_process_vote(struct ballot *ballot)
 {
 	ballot->is_ro = cfg_geti("read_only") != 0;
 	vclock_copy(&ballot->vclock, &replicaset.vclock);
-	vclock_copy(&ballot->gc_vclock, &gc.vclock);
+	if (xdir_first_vclock(&gc.wal_dir, &ballot->gc_vclock) == -1)
+		vclock_create(&ballot->gc_vclock);
 }
 
 /** Insert a new cluster into _schema */
@@ -1938,7 +1939,7 @@ local_recovery(const struct tt_uuid *instance_uuid,
 	 * so we must reflect this in replicaset vclock to
 	 * not attempt to apply these rows twice.
 	 */
-	recovery_scan(recovery, &replicaset.vclock, &gc.vclock);
+	recovery_scan(recovery, &replicaset.vclock);
 	say_info("instance vclock %s", vclock_to_string(&replicaset.vclock));
 
 	if (wal_dir_lock >= 0) {
@@ -2040,12 +2041,6 @@ tx_prio_cb(struct ev_loop *loop, ev_watcher *watcher, int events)
 }
 
 static void
-on_wal_garbage_collection(const struct vclock *vclock)
-{
-	gc_advance(vclock);
-}
-
-static void
 on_wal_checkpoint_threshold(void)
 {
 	say_info("WAL threshold exceeded, triggering checkpoint");
@@ -2080,6 +2075,15 @@ box_is_configured(void)
 	return is_box_configured;
 }
 
+static void
+on_wal_log_action(enum wal_log_action action, const struct vclock *vclock)
+{
+	if ((action & WAL_LOG_CLOSE) != 0)
+		gc_close_log(vclock);
+	if ((action & WAL_LOG_OPEN) != 0)
+		gc_open_log(vclock);
+}
+
 static inline void
 box_cfg_xc(void)
 {
@@ -2093,7 +2097,7 @@ box_cfg_xc(void)
 	rmean_box = rmean_new(iproto_type_strs, IPROTO_TYPE_STAT_MAX);
 	rmean_error = rmean_new(rmean_error_strings, RMEAN_ERROR_LAST);
 
-	gc_init();
+	gc_init(cfg_gets("wal_dir"));
 	engine_init();
 	schema_init();
 	replication_init();
@@ -2105,7 +2109,8 @@ box_cfg_xc(void)
 	int64_t wal_max_size = box_check_wal_max_size(cfg_geti64("wal_max_size"));
 	enum wal_mode wal_mode = box_check_wal_mode(cfg_gets("wal_mode"));
 	if (wal_init(wal_mode, cfg_gets("wal_dir"), wal_max_rows,
-		     wal_max_size, &INSTANCE_UUID, on_wal_garbage_collection,
+		     wal_max_size, &INSTANCE_UUID,
+		     on_wal_log_action,
 		     on_wal_checkpoint_threshold) != 0) {
 		diag_raise();
 	}

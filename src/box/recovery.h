@@ -75,8 +75,7 @@ recovery_delete(struct recovery *r);
  * WAL directory.
  */
 void
-recovery_scan(struct recovery *r,  struct vclock *end_vclock,
-	      struct vclock *gc_vclock);
+recovery_scan(struct recovery *r, struct vclock *end_vclock);
 
 void
 recovery_follow_local(struct recovery *r, struct xstream *stream,

@@ -52,14 +52,16 @@ extern int wal_dir_lock;
 extern "C" {
 #endif /* defined(__cplusplus) */
 
+enum wal_log_action {
+	WAL_LOG_OPEN		= (1 << 0),
+	WAL_LOG_CLOSE		= (1 << 1)
+};
+
 /**
- * Callback invoked in the TX thread when the WAL thread runs out
- * of disk space and has to delete some old WAL files to continue.
- * It is supposed to shoot off WAL consumers that need the deleted
- * files. The vclock of the oldest WAL row still available on the
- * instance is passed in @vclock.
+ * Callback invoked in the TX thread when WAL handles a log file.
  */
-typedef void (*wal_on_garbage_collection_f)(const struct vclock *vclock);
+typedef void (*wal_on_log_action_f)(enum wal_log_action acion,
+				    const struct vclock *vclock);
 
 /**
  * Callback invoked in the TX thread when the total size of WAL
@@ -74,7 +76,7 @@ typedef void (*wal_on_checkpoint_threshold_f)(void);
 int
 wal_init(enum wal_mode wal_mode, const char *wal_dirname, int64_t wal_max_rows,
 	 int64_t wal_max_size, const struct tt_uuid *instance_uuid,
-	 wal_on_garbage_collection_f on_garbage_collection,
+	 wal_on_log_action_f on_log_action,
 	 wal_on_checkpoint_threshold_f on_checkpoint_threshold);
 
 /**
@@ -217,13 +219,6 @@ wal_commit_checkpoint(struct wal_checkpoint *checkpoint);
  */
 void
 wal_set_checkpoint_threshold(int64_t threshold);
-
-/**
- * Remove WAL files that are not needed by consumers reading
- * rows at @vclock or newer.
- */
-void
-wal_collect_garbage(const struct vclock *vclock);
 
 void
 wal_init_vy_log();

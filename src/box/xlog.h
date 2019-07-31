@@ -424,7 +424,7 @@ xdir_touch_xlog(struct xdir *dir, const struct vclock *vclock);
  */
 int
 xdir_create_xlog(struct xdir *dir, struct xlog *xlog,
-		 const struct vclock *vclock);
+		 const struct vclock *vclock, const struct vclock *prev_vclock);
 
 /**
  * Create new xlog writer based on fd.

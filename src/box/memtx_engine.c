@@ -577,7 +577,7 @@ checkpoint_f(va_list ap)
 	}
 
 	struct xlog snap;
-	if (xdir_create_xlog(&ckpt->dir, &snap, &ckpt->vclock) != 0)
+	if (xdir_create_xlog(&ckpt->dir, &snap, &ckpt->vclock, NULL) != 0)
 		return -1;
 
 	say_info("saving snapshot `%s'", snap.filename);

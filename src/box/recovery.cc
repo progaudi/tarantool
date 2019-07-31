@@ -118,21 +118,16 @@ recovery_new(const char *wal_dirname, bool force_recovery,
 }
 
 void
-recovery_scan(struct recovery *r, struct vclock *end_vclock,
-	      struct vclock *gc_vclock)
+recovery_scan(struct recovery *r, struct vclock *end_vclock)
 {
 	xdir_scan_xc(&r->wal_dir);
 
 	if (xdir_last_vclock(&r->wal_dir, end_vclock) < 0 ||
 	    vclock_compare(end_vclock, &r->vclock) < 0) {
 		/* No xlogs after last checkpoint. */
-		vclock_copy(gc_vclock, &r->vclock);
 		vclock_copy(end_vclock, &r->vclock);
 		return;
 	}
-
-	if (xdir_first_vclock(&r->wal_dir, gc_vclock) < 0)
-		unreachable();
 
 	/* Scan the last xlog to find end vclock. */
 	struct xlog_cursor cursor;

@@ -39,6 +39,7 @@
 #include "vclock.h"
 #include "trivia/util.h"
 #include "checkpoint_schedule.h"
+#include "xlog.h"
 
 #if defined(__cplusplus)
 extern "C" {
@@ -103,8 +104,6 @@ typedef rb_tree(struct gc_consumer) gc_tree_t;
 
 /** Garbage collection state. */
 struct gc_state {
-	/** VClock of the oldest WAL row available on the instance. */
-	struct vclock vclock;
 	/**
 	 * Minimal number of checkpoints to preserve.
 	 * Configured by box.cfg.checkpoint_count.
@@ -121,6 +120,10 @@ struct gc_state {
 	 * to the tail. Linked by gc_checkpoint::in_checkpoints.
 	 */
 	struct rlist checkpoints;
+	/** Directory to track log files. */
+	struct xdir wal_dir;
+	/** True if log is opened. */
+	bool log_opened;
 	/** Registered consumers, linked by gc_consumer::node. */
 	gc_tree_t consumers;
 	/** Fiber responsible for periodic checkpointing. */
@@ -198,20 +201,13 @@ gc_last_checkpoint(void)
  * Initialize the garbage collection state.
  */
 void
-gc_init(void);
+gc_init(const char *wal_dir_name);
 
 /**
  * Destroy the garbage collection state.
  */
 void
 gc_free(void);
-
-/**
- * Advance the garbage collector vclock to the given position.
- * Deactivate WAL consumers that need older data.
- */
-void
-gc_advance(const struct vclock *vclock);
 
 /**
  * Update the minimal number of checkpoints to preserve.
@@ -238,6 +234,18 @@ gc_set_checkpoint_interval(double interval);
  */
 void
 gc_add_checkpoint(const struct vclock *vclock);
+
+/**
+ * Tell gc a log was opened.
+ */
+void
+gc_open_log(const struct vclock *vclock);
+
+/**
+ * Tell gc a log was closed.
+ */
+void
+gc_close_log(const struct vclock *vclock);
 
 /**
  * Make a checkpoint.

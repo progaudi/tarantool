@@ -57,6 +57,7 @@
 #include "engine.h"		/* engine_collect_garbage() */
 #include "wal.h"		/* wal_collect_garbage() */
 #include "checkpoint_schedule.h"
+#include "replication.h"
 
 struct gc_state gc;
 
@@ -103,13 +104,16 @@ gc_checkpoint_delete(struct gc_checkpoint *checkpoint)
 }
 
 void
-gc_init(void)
+gc_init(const char *wal_dir_name)
 {
 	/* Don't delete any files until recovery is complete. */
 	gc.min_checkpoint_count = INT_MAX;
 
-	vclock_create(&gc.vclock);
 	rlist_create(&gc.checkpoints);
+	xdir_create(&gc.wal_dir, wal_dir_name, XLOG, &INSTANCE_UUID,
+		    &xlog_opts_default);
+	xdir_scan(&gc.wal_dir);
+	gc.log_opened = false;
 	gc_tree_new(&gc.consumers);
 	fiber_cond_create(&gc.cleanup_cond);
 	checkpoint_schedule_cfg(&gc.checkpoint_schedule, 0, 0);
@@ -135,6 +139,7 @@ gc_free(void)
 	 * running when this function is called.
 	 */
 
+	xdir_destroy(&gc.wal_dir);
 	/* Free checkpoints. */
 	struct gc_checkpoint *checkpoint, *next_checkpoint;
 	rlist_foreach_entry_safe(checkpoint, &gc.checkpoints, in_checkpoints,
@@ -197,10 +202,12 @@ gc_run_cleanup(void)
 	    vclock_sum(vclock) > vclock_sum(&checkpoint->vclock))
 		vclock = &checkpoint->vclock;
 
-	if (vclock_sum(vclock) > vclock_sum(&gc.vclock)) {
-		vclock_copy(&gc.vclock, vclock);
-		run_wal_gc = true;
-	}
+	int cmp = vclock_compare(vclock, &replicaset.vclock);
+	if (gc.log_opened || !(cmp == 0 || cmp == 1))
+		vclock = vclockset_psearch(&gc.wal_dir.index, vclock);
+	if (vclock != NULL)
+	run_wal_gc = vclock != NULL;
+
 
 	if (!run_engine_gc && !run_wal_gc)
 		return; /* nothing to do */
@@ -221,7 +228,8 @@ gc_run_cleanup(void)
 	if (run_engine_gc)
 		engine_collect_garbage(&checkpoint->vclock);
 	if (run_wal_gc)
-		wal_collect_garbage(vclock);
+		xdir_collect_garbage(&gc.wal_dir, vclock_sum(vclock),
+				     XDIR_GC_ASYNC);
 }
 
 static int
@@ -271,34 +279,6 @@ gc_wait_cleanup(void)
 	unsigned scheduled = gc.cleanup_scheduled;
 	while (gc.cleanup_completed < scheduled)
 		fiber_cond_wait(&gc.cleanup_cond);
-}
-
-void
-gc_advance(const struct vclock *vclock)
-{
-	/*
-	 * In case of emergency ENOSPC, the WAL thread may delete
-	 * WAL files needed to restore from backup checkpoints,
-	 * which would be kept by the garbage collector otherwise.
-	 * Bring the garbage collector vclock up to date.
-	 */
-	vclock_copy(&gc.vclock, vclock);
-
-	struct gc_consumer *consumer = gc_tree_first(&gc.consumers);
-	while (consumer != NULL &&
-	       vclock_sum(&consumer->vclock) < vclock_sum(vclock)) {
-		struct gc_consumer *next = gc_tree_next(&gc.consumers,
-							consumer);
-		assert(!consumer->is_inactive);
-		consumer->is_inactive = true;
-		gc_tree_remove(&gc.consumers, consumer);
-
-		say_crit("deactivated WAL consumer %s at %s", consumer->name,
-			 vclock_to_string(&consumer->vclock));
-
-		consumer = next;
-	}
-	gc_schedule_cleanup();
 }
 
 void
@@ -355,6 +335,26 @@ gc_add_checkpoint(const struct vclock *vclock)
 	rlist_add_tail_entry(&gc.checkpoints, checkpoint, in_checkpoints);
 	gc.checkpoint_count++;
 
+	gc_schedule_cleanup();
+}
+
+void
+gc_open_log(const struct vclock *vclock)
+{
+	struct vclock last_vclock;
+	if (xdir_last_vclock(&gc.wal_dir, &last_vclock) == -1 ||
+	    vclock_compare(vclock, &last_vclock) != 0)
+		xdir_add_vclock(&gc.wal_dir, vclock);
+	assert(!gc.log_opened);
+	gc.log_opened = true;
+}
+
+void
+gc_close_log(const struct vclock *vclock)
+{
+	(void) vclock;
+	assert(gc.log_opened);
+	gc.log_opened = false;
 	gc_schedule_cleanup();
 }
 

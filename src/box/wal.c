@@ -78,7 +78,7 @@ struct wal_writer
 {
 	struct journal base;
 	/* ----------------- tx ------------------- */
-	wal_on_garbage_collection_f on_garbage_collection;
+	wal_on_log_action_f on_log_action;
 	wal_on_checkpoint_threshold_f on_checkpoint_threshold;
 	/**
 	 * The rollback queue. An accumulator for all requests
@@ -119,12 +119,7 @@ struct wal_writer
 	 * with this LSN and LSN becomes "real".
 	 */
 	struct vclock vclock;
-	/**
-	 * VClock of the most recent successfully created checkpoint.
-	 * The WAL writer must not delete WAL files that are needed to
-	 * recover from it even if it is running out of disk space.
-	 */
-	struct vclock checkpoint_vclock;
+	struct vclock prev_vclock;
 	/** Total size of WAL files written since the last checkpoint. */
 	int64_t checkpoint_wal_size;
 	/**
@@ -307,28 +302,6 @@ tx_schedule_rollback(struct cmsg *msg)
 			     container_of(msg, struct wal_msg, base));
 }
 
-
-/**
- * This message is sent from WAL to TX when the WAL thread hits
- * ENOSPC and has to delete some backup WAL files to continue.
- * The TX thread uses this message to shoot off WAL consumers
- * that needed deleted WAL files.
- */
-struct tx_notify_gc_msg {
-	struct cmsg base;
-	/** VClock of the oldest WAL row preserved by WAL. */
-	struct vclock vclock;
-};
-
-static void
-tx_notify_gc(struct cmsg *msg)
-{
-	struct wal_writer *writer = &wal_writer_singleton;
-	struct vclock *vclock = &((struct tx_notify_gc_msg *)msg)->vclock;
-	writer->on_garbage_collection(vclock);
-	free(msg);
-}
-
 static void
 tx_notify_checkpoint(struct cmsg *msg)
 {
@@ -346,7 +319,7 @@ static void
 wal_writer_create(struct wal_writer *writer, enum wal_mode wal_mode,
 		  const char *wal_dirname, int64_t wal_max_rows,
 		  int64_t wal_max_size, const struct tt_uuid *instance_uuid,
-		  wal_on_garbage_collection_f on_garbage_collection,
+		  wal_on_log_action_f on_log_action,
 		  wal_on_checkpoint_threshold_f on_checkpoint_threshold)
 {
 	writer->wal_mode = wal_mode;
@@ -370,10 +343,10 @@ wal_writer_create(struct wal_writer *writer, enum wal_mode wal_mode,
 	writer->checkpoint_triggered = false;
 
 	vclock_create(&writer->vclock);
-	vclock_create(&writer->checkpoint_vclock);
+	vclock_clear(&writer->prev_vclock);
 	rlist_create(&writer->watchers);
 
-	writer->on_garbage_collection = on_garbage_collection;
+	writer->on_log_action = on_log_action;
 	writer->on_checkpoint_threshold = on_checkpoint_threshold;
 
 	mempool_create(&writer->msg_pool, &cord()->slabc,
@@ -391,6 +364,40 @@ wal_writer_destroy(struct wal_writer *writer)
 static int
 wal_writer_f(va_list ap);
 
+struct tx_log_action_msg {
+	struct cmsg base;
+	enum wal_log_action action;
+	struct vclock vclock;
+};
+
+static void
+tx_on_log_action(struct cmsg *base)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	struct tx_log_action_msg *msg =
+		container_of(base, struct tx_log_action_msg, base);
+	writer->on_log_action(msg->action, &msg->vclock);
+	free(msg);
+}
+
+/* Issue notification wal closed log. */
+static inline void
+wal_notify_log_action(struct wal_writer *writer, enum wal_log_action action)
+{
+	struct tx_log_action_msg *msg = malloc(sizeof(*msg));
+	if (msg == NULL) {
+		say_error("Failed to allocate log close message");
+		return;
+	}
+	static struct cmsg_hop route[] = {
+		{ tx_on_log_action, NULL },
+	};
+	cmsg_init(&msg->base, route);
+	msg->action = action;
+	vclock_copy(&msg->vclock, &writer->vclock);
+	cpipe_push(&writer->tx_prio_pipe, &msg->base);
+}
+
 static int
 wal_open_f(struct cbus_call_msg *msg)
 {
@@ -399,7 +406,10 @@ wal_open_f(struct cbus_call_msg *msg)
 	const char *path = xdir_format_filename(&writer->wal_dir,
 				vclock_sum(&writer->vclock), NONE);
 	assert(!xlog_is_open(&writer->current_wal));
-	return xlog_open(&writer->current_wal, path, &writer->wal_dir.opts);
+	int rc = xlog_open(&writer->current_wal, path, &writer->wal_dir.opts);
+	if (rc == 0)
+		wal_notify_log_action(writer, WAL_LOG_OPEN);
+	return rc;
 }
 
 /**
@@ -463,7 +473,7 @@ wal_open(struct wal_writer *writer)
 int
 wal_init(enum wal_mode wal_mode, const char *wal_dirname, int64_t wal_max_rows,
 	 int64_t wal_max_size, const struct tt_uuid *instance_uuid,
-	 wal_on_garbage_collection_f on_garbage_collection,
+	 wal_on_log_action_f on_log_action,
 	 wal_on_checkpoint_threshold_f on_checkpoint_threshold)
 {
 	assert(wal_max_rows > 1);
@@ -471,7 +481,7 @@ wal_init(enum wal_mode wal_mode, const char *wal_dirname, int64_t wal_max_rows,
 	/* Initialize the state. */
 	struct wal_writer *writer = &wal_writer_singleton;
 	wal_writer_create(writer, wal_mode, wal_dirname, wal_max_rows,
-			  wal_max_size, instance_uuid, on_garbage_collection,
+			  wal_max_size, instance_uuid, on_log_action,
 			  on_checkpoint_threshold);
 
 	/* Start WAL thread. */
@@ -491,12 +501,9 @@ wal_enable(void)
 
 	/* Initialize the writer vclock from the recovery state. */
 	vclock_copy(&writer->vclock, &replicaset.vclock);
+	if (vclock_sum(&replicaset.vclock) > 0)
+		vclock_copy(&writer->prev_vclock, &replicaset.vclock);
 
-	/*
-	 * Scan the WAL directory to build an index of all
-	 * existing WAL files. Required for garbage collection,
-	 * see wal_collect_garbage().
-	 */
 	if (xdir_scan(&writer->wal_dir))
 		return -1;
 
@@ -553,8 +560,8 @@ wal_begin_checkpoint_f(struct cbus_call_msg *data)
 	if (xlog_is_open(&writer->current_wal) &&
 	    vclock_sum(&writer->current_wal.meta.vclock) !=
 	    vclock_sum(&writer->vclock)) {
-
 		xlog_close(&writer->current_wal, false);
+		wal_notify_log_action(writer, WAL_LOG_CLOSE);
 		/*
 		 * The next WAL will be created on the first write.
 		 */
@@ -609,7 +616,6 @@ wal_commit_checkpoint_f(struct cbus_call_msg *data)
 	 * when checkpointing started from the current value
 	 * rather than just setting it to 0.
 	 */
-	vclock_copy(&writer->checkpoint_vclock, &msg->vclock);
 	assert(writer->checkpoint_wal_size >= msg->wal_size);
 	writer->checkpoint_wal_size -= msg->wal_size;
 	writer->checkpoint_triggered = false;
@@ -620,10 +626,8 @@ void
 wal_commit_checkpoint(struct wal_checkpoint *checkpoint)
 {
 	struct wal_writer *writer = &wal_writer_singleton;
-	if (writer->wal_mode == WAL_NONE) {
-		vclock_copy(&writer->checkpoint_vclock, &checkpoint->vclock);
+	if (writer->wal_mode == WAL_NONE)
 		return;
-	}
 	bool cancellable = fiber_set_cancellable(false);
 	cbus_call(&writer->wal_pipe, &writer->tx_prio_pipe,
 		  &checkpoint->base, wal_commit_checkpoint_f, NULL,
@@ -661,54 +665,6 @@ wal_set_checkpoint_threshold(int64_t threshold)
 	fiber_set_cancellable(cancellable);
 }
 
-struct wal_gc_msg
-{
-	struct cbus_call_msg base;
-	const struct vclock *vclock;
-};
-
-static int
-wal_collect_garbage_f(struct cbus_call_msg *data)
-{
-	struct wal_writer *writer = &wal_writer_singleton;
-	const struct vclock *vclock = ((struct wal_gc_msg *)data)->vclock;
-
-	if (!xlog_is_open(&writer->current_wal) &&
-	    vclock_sum(vclock) >= vclock_sum(&writer->vclock)) {
-		/*
-		 * The last available WAL file has been sealed and
-		 * all registered consumers have done reading it.
-		 * We can delete it now.
-		 */
-	} else {
-		/*
-		 * Find the most recent WAL file that contains rows
-		 * required by registered consumers and delete all
-		 * older WAL files.
-		 */
-		vclock = vclockset_psearch(&writer->wal_dir.index, vclock);
-	}
-	if (vclock != NULL)
-		xdir_collect_garbage(&writer->wal_dir, vclock_sum(vclock),
-				     XDIR_GC_ASYNC);
-
-	return 0;
-}
-
-void
-wal_collect_garbage(const struct vclock *vclock)
-{
-	struct wal_writer *writer = &wal_writer_singleton;
-	if (writer->wal_mode == WAL_NONE)
-		return;
-	struct wal_gc_msg msg;
-	msg.vclock = vclock;
-	bool cancellable = fiber_set_cancellable(false);
-	cbus_call(&writer->wal_pipe, &writer->tx_prio_pipe, &msg.base,
-		  wal_collect_garbage_f, NULL, TIMEOUT_INFINITY);
-	fiber_set_cancellable(cancellable);
-}
-
 static void
 wal_notify_watchers(struct wal_writer *writer, unsigned events);
 
@@ -736,6 +692,7 @@ wal_opt_rotate(struct wal_writer *writer)
 	if (xlog_is_open(&writer->current_wal) &&
 	    (writer->current_wal.rows >= writer->wal_max_rows ||
 	     writer->current_wal.offset >= writer->wal_max_size)) {
+		wal_notify_log_action(writer, WAL_LOG_CLOSE);
 		/*
 		 * We can not handle xlog_close()
 		 * failure in any reasonable way.
@@ -748,16 +705,13 @@ wal_opt_rotate(struct wal_writer *writer)
 		return 0;
 
 	if (xdir_create_xlog(&writer->wal_dir, &writer->current_wal,
-			     &writer->vclock) != 0) {
+			     &writer->vclock, &writer->prev_vclock) != 0) {
 		diag_log();
 		return -1;
 	}
-	/*
-	 * Keep track of the new WAL vclock. Required for garbage
-	 * collection, see wal_collect_garbage().
-	 */
-	xdir_add_vclock(&writer->wal_dir, &writer->vclock);
+	vclock_copy(&writer->prev_vclock, &writer->vclock);
 
+	wal_notify_log_action(writer, WAL_LOG_OPEN);
 	wal_notify_watchers(writer, WAL_EVENT_ROTATE);
 	return 0;
 }
@@ -772,16 +726,9 @@ wal_opt_rotate(struct wal_writer *writer)
 static int
 wal_fallocate(struct wal_writer *writer, size_t len)
 {
-	bool warn_no_space = true, notify_gc = false;
 	struct xlog *l = &writer->current_wal;
 	struct errinj *errinj = errinj(ERRINJ_WAL_FALLOCATE, ERRINJ_INT);
 	int rc = 0;
-
-	/*
-	 * Max LSN that can be collected in case of ENOSPC -
-	 * we must not delete WALs necessary for recovery.
-	 */
-	int64_t gc_lsn = vclock_sum(&writer->checkpoint_vclock);
 
 	/*
 	 * The actual write size can be greater than the sum size
@@ -803,45 +750,13 @@ retry:
 	}
 	if (errno != ENOSPC)
 		goto error;
-	if (!xdir_has_garbage(&writer->wal_dir, gc_lsn))
-		goto error;
-
-	if (warn_no_space) {
-		say_crit("ran out of disk space, try to delete old WAL files");
-		warn_no_space = false;
-	}
-
-	xdir_collect_garbage(&writer->wal_dir, gc_lsn, XDIR_GC_REMOVE_ONE);
-	notify_gc = true;
+		//TODO: Garbage
+	goto error;
 	goto retry;
 error:
 	diag_log();
 	rc = -1;
 out:
-	/*
-	 * Notify the TX thread if the WAL thread had to delete
-	 * some WAL files to proceed so that TX can shoot off WAL
-	 * consumers that still need those files.
-	 *
-	 * We allocate the message with malloc() and we ignore
-	 * allocation failures, because this is a pretty rare
-	 * event and a failure to send this message isn't really
-	 * critical.
-	 */
-	if (notify_gc) {
-		static struct cmsg_hop route[] = {
-			{ tx_notify_gc, NULL },
-		};
-		struct tx_notify_gc_msg *msg = malloc(sizeof(*msg));
-		if (msg != NULL) {
-			if (xdir_first_vclock(&writer->wal_dir,
-					      &msg->vclock) < 0)
-				vclock_copy(&msg->vclock, &writer->vclock);
-			cmsg_init(&msg->base, route);
-			cpipe_push(&writer->tx_prio_pipe, &msg->base);
-		} else
-			say_warn("failed to allocate gc notification message");
-	}
 	return rc;
 }
 
@@ -1100,7 +1015,7 @@ wal_writer_f(va_list ap)
 			    &writer->current_wal.meta.vclock) > 0)) {
 		struct xlog l;
 		if (xdir_create_xlog(&writer->wal_dir, &l,
-				     &writer->vclock) == 0)
+				     &writer->vclock, &writer->prev_vclock) == 0)
 			xlog_close(&l, false);
 		else
 			diag_log();

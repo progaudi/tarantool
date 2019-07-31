@@ -371,12 +371,16 @@ lbox_info_gc_call(struct lua_State *L)
 
 	lua_newtable(L);
 
+	struct vclock gc_vclock;
+	if (xdir_first_vclock(&gc.wal_dir, &gc_vclock) == -1)
+		vclock_create(&gc_vclock);
+
 	lua_pushstring(L, "vclock");
-	lbox_pushvclock(L, &gc.vclock);
+	lbox_pushvclock(L, &gc_vclock);
 	lua_settable(L, -3);
 
 	lua_pushstring(L, "signature");
-	luaL_pushint64(L, vclock_sum(&gc.vclock));
+	luaL_pushint64(L, vclock_sum(&gc_vclock));
 	lua_settable(L, -3);
 
 	lua_pushstring(L, "checkpoint_is_in_progress");
