@@ -577,3 +577,18 @@ gc_consumer_iterator_next(struct gc_consumer_iterator *it)
 		it->curr = gc_tree_first(&gc.consumers);
 	return it->curr;
 }
+
+int
+gc_force_wal_cleanup()
+{
+	struct gc_checkpoint *checkpoint;
+	checkpoint = rlist_first_entry(&gc.checkpoints,
+				       struct gc_checkpoint, in_checkpoints);
+	say_error("ckpt vclck %s", vclock_to_string(&checkpoint->vclock));
+	if (!xdir_has_garbage(&gc.wal_dir, vclock_sum(&checkpoint->vclock)))
+		return -1;
+	say_error("start gc one");
+	xdir_collect_garbage(&gc.wal_dir, vclock_sum(&checkpoint->vclock),
+			     XDIR_GC_ASYNC | XDIR_GC_REMOVE_ONE);
+	return 0;
+}

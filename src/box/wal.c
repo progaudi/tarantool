@@ -43,6 +43,7 @@
 #include "cbus.h"
 #include "coio_task.h"
 #include "replication.h"
+#include "gc.h"
 
 enum {
 	/**
@@ -716,6 +717,59 @@ wal_opt_rotate(struct wal_writer *writer)
 	return 0;
 }
 
+struct gc_force_wal_msg {
+	struct cmsg base;
+	struct fiber_cond done_cond;
+	bool done;
+	int rc;
+};
+
+static void
+wal_gc_wal_force_done(struct cmsg *base)
+{
+	struct gc_force_wal_msg *msg = container_of(base,
+						   struct gc_force_wal_msg,
+						   base);
+	msg->done = true;
+	fiber_cond_signal(&msg->done_cond);
+}
+
+static int
+tx_gc_force_wal_f(va_list ap)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	struct gc_force_wal_msg *msg = va_arg(ap, struct gc_force_wal_msg *);
+	struct cmsg_hop respond_route[] = {
+		{wal_gc_wal_force_done, NULL}
+	};
+	msg->rc = gc_force_wal_cleanup();
+	say_error("forced %i", msg->rc);
+	cmsg_init(&msg->base, respond_route);
+	cpipe_push(&writer->wal_pipe, &msg->base);
+	return 0;
+}
+
+void
+tx_gc_wal_force(struct cmsg *base)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	struct gc_force_wal_msg *msg = container_of(base,
+						   struct gc_force_wal_msg,
+						   base);
+	struct fiber *gc_fiber = fiber_new("wal_gc_fiber", tx_gc_force_wal_f);
+	if (gc_fiber == NULL) {
+		struct cmsg_hop respond_route[] = {
+			{wal_gc_wal_force_done, NULL}
+		};
+		msg->rc = -1;
+		cmsg_init(&msg->base, respond_route);
+		cpipe_push(&writer->wal_pipe, &msg->base);
+		return;
+	}
+	fiber_start(gc_fiber, msg);
+	return;
+}
+
 /**
  * Make sure there's enough disk space to append @len bytes
  * of data to the current WAL.
@@ -750,9 +804,20 @@ retry:
 	}
 	if (errno != ENOSPC)
 		goto error;
-		//TODO: Garbage
-	goto error;
-	goto retry;
+	static struct cmsg_hop gc_wal_force_route[] = {
+		{tx_gc_wal_force, NULL}
+	};
+	struct gc_force_wal_msg msg;
+	msg.done = false;
+	fiber_cond_create(&msg.done_cond);
+	cmsg_init(&msg.base, gc_wal_force_route);
+	cpipe_push(&writer->tx_prio_pipe, &msg.base);
+
+	while (!msg.done)
+		fiber_sleep(0.001);//cond_wait(&msg.done_cond);
+	say_error("force done %i", msg.rc);
+	if (msg.rc == 0)
+		goto retry;
 error:
 	diag_log();
 	rc = -1;

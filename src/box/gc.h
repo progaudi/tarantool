@@ -341,6 +341,9 @@ gc_consumer_iterator_init(struct gc_consumer_iterator *it)
 struct gc_consumer *
 gc_consumer_iterator_next(struct gc_consumer_iterator *it);
 
+int
+gc_force_wal_cleanup();
+
 #if defined(__cplusplus)
 } /* extern "C" */
 #endif /* defined(__cplusplus) */
