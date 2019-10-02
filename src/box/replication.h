@@ -188,6 +188,10 @@ struct replicaset {
 	 */
 	struct rlist anon;
 	/**
+	 * List of triggers invoked on lsn changed.
+	 */
+	struct rlist on_vclock;
+	/**
 	 * TX thread local vclock reflecting the state
 	 * of the cluster as maintained by appliers.
 	 */

@@ -332,3 +332,38 @@ box.cfg{replication=""}
 
 box.cfg{replication_connect_timeout=replication_connect_timeout}
 box.cfg{replication_connect_quorum=replication_connect_quorum}
+
+--
+-- gh-3808 Trigger on_vclock_changed added
+--
+engine = test_run:get_cfg('engine')
+test_run:cleanup_cluster()
+box.schema.user.grant('guest', 'replication')
+_ = box.schema.space.create('test', {engine = engine})
+_ = box.space.test:create_index('pk')
+test_run:cmd("create server replica with rpl_master=default, script='replication/replica.lua'")
+test_run:cmd("start server replica")
+replication_events = {}
+-- trigger setup
+trigger = box.info.replication.on_vclock(function(vclock, replica_id) replication_events[replica_id] = vclock end)
+for i = 0, 99 do box.space["test"]:insert({i}) end
+-- wait until replica catches up the local one
+test_run:wait_cond(function() return box.info.replication[2].downstream.vclock ~= box.info.vclock end)
+-- check that the trigger caught the last transaction
+replication_events[box.info.replication[2].id][box.info.id] == box.info.lsn
+-- trigger reset
+_ = box.info.replication.on_vclock(nil, trigger)
+for i = 100, 199 do box.space["test"]:insert({i}) end
+-- wait until replica catches up the local one
+test_run:wait_cond(function() return box.info.replication[2].downstream.vclock ~= box.info.vclock end)
+-- check that the trigger didn't catch the last transaction
+replication_events[box.info.replication[2].id][box.info.id] < box.info.lsn
+
+replication_events = nil
+test_run:cmd("stop server replica")
+test_run:cmd("cleanup server replica")
+test_run:cmd("delete server replica")
+box.space.test:drop()
+
+test_run:cleanup_cluster()
+box.schema.user.revoke('guest', 'replication')

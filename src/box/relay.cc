@@ -393,6 +393,7 @@ tx_status_update(struct cmsg *msg)
 {
 	struct relay_status_msg *status = (struct relay_status_msg *)msg;
 	vclock_copy(&status->relay->tx.vclock, &status->vclock);
+	trigger_run(&replicaset.on_vclock, status->relay->replica);
 	static const struct cmsg_hop route[] = {
 		{relay_status_update, NULL}
 	};
