@@ -1,8 +1,12 @@
 stages:
   - test
+  - perf
+  - cleanup
 
 variables:
   GITLAB_MAKE: "make -f .gitlab.mk"
+  IMAGE_PERF: "${CI_REGISTRY}/${CI_PROJECT_PATH}/perf/ubuntu-bionic:perf_master"
+  IMAGE_PERF_BUILT: "${CI_REGISTRY}/${CI_PROJECT_PATH}/perf_tmp/ubuntu-bionic:perf_${CI_COMMIT_SHORT_SHA}"
 
 # Jobs templates
 
@@ -25,6 +29,11 @@ variables:
     - external_pull_requests
     - merge_requests
     - /^.*-full-ci$/
+
+.perf_only_template: &perf_only_definition
+  only:
+    - master
+    - /^.*-perf$/
 
 .docker_test_template: &docker_test_definition
   image: "${CI_REGISTRY}/${CI_PROJECT_PATH}/testing/debian-stretch:latest"
@@ -76,6 +85,13 @@ variables:
     - ${GITLAB_MAKE} vms_start
   after_script:
     - ${GITLAB_MAKE} vms_shutdown
+
+.perf_docker_test_template: &perf_docker_test_definition
+  <<: *perf_only_definition
+  image: ${IMAGE_PERF_BUILT}
+  stage: perf
+  tags:
+    - docker_perf
 
 # Tests
 
@@ -167,6 +183,83 @@ freebsd_12_release:
     MAKE: 'gmake'
   script:
     - ${GITLAB_MAKE} vms_test_freebsd
+
+# Perf
+
+perf_bootstrap:
+  <<: *perf_only_definition
+  stage: test
+  tags:
+    - perf
+  script:
+    - ${GITLAB_MAKE} docker_perf_bootstrap
+
+perf_sysbench:
+  <<: *perf_docker_test_definition
+  script:
+    - ${GITLAB_MAKE} perf_sysbench
+
+perf_tpcc:
+  <<: *perf_docker_test_definition
+  script:
+    - ${GITLAB_MAKE} perf_tpcc
+
+perf_ycsb_hash:
+  <<: *perf_docker_test_definition
+  variables:
+    TYPE: 'hash'
+  script:
+    - ${GITLAB_MAKE} perf_ycsb
+
+perf_ycsb_tree:
+  <<: *perf_docker_test_definition
+  variables:
+    TYPE: 'tree'
+  script:
+    - ${GITLAB_MAKE} perf_ycsb
+
+perf_nosqlbench_hash:
+  <<: *perf_docker_test_definition
+  variables:
+    TYPE: 'hash'
+  script:
+    - ${GITLAB_MAKE} perf_nosqlbench
+
+perf_nosqlbench_tree:
+  <<: *perf_docker_test_definition
+  variables:
+    TYPE: 'tree'
+  script:
+    - ${GITLAB_MAKE} perf_nosqlbench
+
+perf_cbench:
+  <<: *perf_docker_test_definition
+  script:
+    - ${GITLAB_MAKE} perf_cbench
+
+# TODO: need to tune the docker memory size
+#perf_linkbench:
+#  <<: *perf_docker_test_definition
+#  tags:
+#    - docker_perf_hdd
+#  script:
+#    - ${GITLAB_MAKE} perf_linkbench
+
+perf_linkbench_ssd:
+  <<: *perf_docker_test_definition
+  tags:
+    - docker_perf_ssd
+  script:
+    - ${GITLAB_MAKE} perf_linkbench
+
+remove_images:
+  <<: *perf_only_definition
+  stage: cleanup
+  when: always
+  tags:
+    - perf
+  script:
+    - ${GITLAB_MAKE} docker_perf_tmp_image_remove
 
 # Packs
 

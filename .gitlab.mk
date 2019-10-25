@@ -41,6 +41,7 @@ test_%_no_deps: git_submodule_update
 
 GITLAB_REGISTRY?=registry.gitlab.com
 DOCKER_BUILD=docker build --network=host -f - .
+DOCKERFILE_BUILD=docker build --network=host
 
 define DEBIAN_STRETCH_DOCKERFILE
 FROM packpack/packpack:debian-stretch
@@ -77,6 +78,25 @@ docker_bootstrap:
 	docker push ${DEBIAN_BUSTER_IMAGE}:${TRAVIS_CI_MD5SUM}
 	docker push ${DEBIAN_STRETCH_IMAGE}:latest
 	docker push ${DEBIAN_BUSTER_IMAGE}:latest
+
+docker_perf_bootstrap:
+	git clone https://github.com/tarantool/bench-run.git
+	docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} \
+		${CI_REGISTRY}
+	# build all benchmarks w/o depends on Tarantool sources
+	${DOCKERFILE_BUILD} --add-host $(shell hostname):127.0.0.1 \
+		-t ${IMAGE_PERF} -f bench-run/dockerfiles/ubuntu_benchs .
+	docker push ${IMAGE_PERF}
+	# build Tarantool and benchmarks with depends on Tarantool sources
+	${DOCKERFILE_BUILD} --build-arg image_from=${IMAGE_PERF} \
+		-t ${IMAGE_PERF_BUILT} -f bench-run/dockerfiles/ubuntu_tnt .
+	docker push ${IMAGE_PERF_BUILT}
+
+# #####################################################
+# Remove temporary performance image from the test host
+# #####################################################
+docker_perf_tmp_image_remove:
+	docker rmi --force ${IMAGE_PERF_BUILT}
 
 # #################################
 # Run tests under a virtual machine
@@ -126,3 +146,25 @@ deploy: package
 
 static_build:
 	docker build --network=host --build-arg RUN_TESTS="${RUN_TESTS}" -f Dockerfile.staticbuild .
+
+# ###################
+# Performance testing
+# ###################
+
+perf_sysbench:
+	/opt/bench-run/sysbench/run.sh
+
+perf_tpcc:
+	/opt/bench-run/tpcc/run.sh
+
+perf_ycsb:
+	/opt/bench-run/ycsb/run.sh ${TYPE} ${RUNS}
+
+perf_nosqlbench:
+	/opt/bench-run/nosqlbench/run.sh ${TYPE}
+
+perf_cbench:
+	/opt/bench-run/cbench/run.sh
+
+perf_linkbench:
+	/opt/bench-run/linkbench/run.sh
