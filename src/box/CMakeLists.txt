@@ -137,6 +137,7 @@ add_library(box STATIC
     sql_stmt_cache.c
     wal.c
     mclock.c
+    xrow_buf.c
     call.c
     merger.c
     ${lua_sources}
