@@ -129,6 +129,7 @@ add_library(box STATIC
     execute.c
     wal.c
     mclock.c
+    xrow_buf.c
     call.c
     merger.c
     ${lua_sources}
