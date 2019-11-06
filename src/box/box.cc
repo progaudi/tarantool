@@ -1497,7 +1497,8 @@ box_process_join(struct ev_io *io, struct xrow_header *header)
 	struct xrow_header row;
 	xrow_encode_vclock_xc(&row, &stop_vclock);
 	row.sync = header->sync;
-	coio_write_xrow(io, &row);
+	if (coio_write_xrow(io, &row) < 0)
+		diag_raise();
 
 	/*
 	 * Final stage: feed replica with WALs in range
@@ -1509,7 +1510,8 @@ box_process_join(struct ev_io *io, struct xrow_header *header)
 	/* Send end of WAL stream marker */
 	xrow_encode_vclock_xc(&row, &replicaset.vclock);
 	row.sync = header->sync;
-	coio_write_xrow(io, &row);
+	if (coio_write_xrow(io, &row) < 0)
+		diag_raise();
 
 	/*
 	 * Advance the WAL consumer state to the position where
@@ -1591,7 +1593,8 @@ box_process_subscribe(struct ev_io *io, struct xrow_header *header)
 	assert(self != NULL); /* the local registration is read-only */
 	row.replica_id = self->id;
 	row.sync = header->sync;
-	coio_write_xrow(io, &row);
+	if (coio_write_xrow(io, &row) < 0)
+		diag_raise();
 
 	say_info("subscribed replica %s at %s",
 		 tt_uuid_str(&replica_uuid), sio_socketname(io->fd));

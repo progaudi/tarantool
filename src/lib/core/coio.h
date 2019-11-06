@@ -33,6 +33,9 @@
 #include "fiber.h"
 #include "trivia/util.h"
 #if defined(__cplusplus)
+extern "C" {
+#endif /* defined(__cplusplus) */
+
 #include "evio.h"
 
 /**
@@ -59,10 +62,6 @@ coio_connect(struct ev_io *coio, struct uri *uri, struct sockaddr *addr,
 	return coio_connect_timeout(coio, uri, addr, addr_len, TIMEOUT_INFINITY);
 }
 
-void
-coio_bind(struct ev_io *coio, struct sockaddr *addr,
-	  socklen_t addrlen);
-
 int
 coio_accept(struct ev_io *coio, struct sockaddr *addr, socklen_t addrlen,
 	    ev_tstamp timeout);
@@ -71,7 +70,7 @@ void
 coio_create(struct ev_io *coio, int fd);
 
 static inline void
-coio_close(ev_loop *loop, struct ev_io *coio)
+coio_destroy(ev_loop *loop, struct ev_io *coio)
 {
 	return evio_close(loop, coio);
 }
@@ -164,7 +163,7 @@ coio_service_init(struct coio_service *service, const char *name,
 		  fiber_func handler, void *handler_param);
 
 /** Wait until the service binds to the port. */
-void
+int
 coio_service_start(struct evio_service *service, const char *uri);
 
 void
@@ -185,8 +184,6 @@ coio_stat_stat_timeout(ev_stat *stat, ev_tstamp delay);
 int
 coio_waitpid(pid_t pid);
 
-extern "C" {
-#endif /* defined(__cplusplus) */
 
 /** \cond public */
 

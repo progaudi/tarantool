@@ -30,6 +30,7 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+#include <unistd.h>
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -38,14 +39,14 @@ struct ev_io;
 struct ibuf;
 struct xrow_header;
 
-void
+ssize_t
 coio_read_xrow(struct ev_io *coio, struct ibuf *in, struct xrow_header *row);
 
-void
-coio_read_xrow_timeout_xc(struct ev_io *coio, struct ibuf *in,
-			  struct xrow_header *row, double timeout);
+ssize_t
+coio_read_xrow_timeout(struct ev_io *coio, struct ibuf *in,
+		       struct xrow_header *row, double timeout);
 
-void
+ssize_t
 coio_write_xrow(struct ev_io *coio, const struct xrow_header *row);
 
 

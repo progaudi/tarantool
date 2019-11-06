@@ -35,71 +35,74 @@
 #include "error.h"
 #include "msgpuck/msgpuck.h"
 
-void
+ssize_t
 coio_read_xrow(struct ev_io *coio, struct ibuf *in, struct xrow_header *row)
 {
 	/* Read fixed header */
-	if (ibuf_used(in) < 1)
-		coio_breadn(coio, in, 1);
+	if (ibuf_used(in) < 1 && coio_breadn(coio, in, 1) < 0)
+		return -1;
 
 	/* Read length */
 	if (mp_typeof(*in->rpos) != MP_UINT) {
-		tnt_raise(ClientError, ER_INVALID_MSGPACK,
-			  "packet length");
+		diag_set(ClientError, ER_INVALID_MSGPACK,
+			 "packet length");
+		return -1;
 	}
 	ssize_t to_read = mp_check_uint(in->rpos, in->wpos);
-	if (to_read > 0)
-		coio_breadn(coio, in, to_read);
+	if (to_read > 0 && coio_breadn(coio, in, to_read) < 0)
+		return -1;
 
 	uint32_t len = mp_decode_uint((const char **) &in->rpos);
 
 	/* Read header and body */
 	to_read = len - ibuf_used(in);
-	if (to_read > 0)
-		coio_breadn(coio, in, to_read);
+	if (to_read > 0 && coio_breadn(coio, in, to_read) < 0)
+		return -1;
 
-	xrow_header_decode_xc(row, (const char **) &in->rpos, in->rpos + len,
-			      true);
+	return xrow_header_decode(row, (const char **) &in->rpos, in->rpos + len,
+				  true);
 }
 
-void
-coio_read_xrow_timeout_xc(struct ev_io *coio, struct ibuf *in,
-			  struct xrow_header *row, ev_tstamp timeout)
+ssize_t
+coio_read_xrow_timeout(struct ev_io *coio, struct ibuf *in,
+		       struct xrow_header *row, ev_tstamp timeout)
 {
 	ev_tstamp start, delay;
 	coio_timeout_init(&start, &delay, timeout);
 	/* Read fixed header */
-	if (ibuf_used(in) < 1)
-		coio_breadn_timeout(coio, in, 1, delay);
+	if (ibuf_used(in) < 1 && coio_breadn_timeout(coio, in, 1, delay) < 0)
+		return -1;
 	coio_timeout_update(&start, &delay);
 
 	/* Read length */
 	if (mp_typeof(*in->rpos) != MP_UINT) {
-		tnt_raise(ClientError, ER_INVALID_MSGPACK,
-			  "packet length");
+		diag_set(ClientError, ER_INVALID_MSGPACK,
+			 "packet length");
+		return -1;
 	}
 	ssize_t to_read = mp_check_uint(in->rpos, in->wpos);
-	if (to_read > 0)
-		coio_breadn_timeout(coio, in, to_read, delay);
+	if (to_read > 0 && coio_breadn_timeout(coio, in, to_read, delay) < 0)
+		return -1;
 	coio_timeout_update(&start, &delay);
 
 	uint32_t len = mp_decode_uint((const char **) &in->rpos);
 
 	/* Read header and body */
 	to_read = len - ibuf_used(in);
-	if (to_read > 0)
-		coio_breadn_timeout(coio, in, to_read, delay);
+	if (to_read > 0 && coio_breadn_timeout(coio, in, to_read, delay) < 0)
+		return -1;
 
-	xrow_header_decode_xc(row, (const char **) &in->rpos, in->rpos + len,
-			      true);
+	return xrow_header_decode(row, (const char **) &in->rpos, in->rpos + len,
+				  true);
 }
 
-
-void
+ssize_t
 coio_write_xrow(struct ev_io *coio, const struct xrow_header *row)
 {
 	struct iovec iov[XROW_IOVMAX];
-	int iovcnt = xrow_to_iovec_xc(row, iov);
-	coio_writev(coio, iov, iovcnt, 0);
+	int iovcnt = xrow_to_iovec(row, iov);
+	if (iovcnt < 0)
+		return -1;
+	return coio_writev(coio, iov, iovcnt, 0);
 }
 

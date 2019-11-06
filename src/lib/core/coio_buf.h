@@ -45,6 +45,8 @@ coio_bread(struct ev_io *coio, struct ibuf *buf, size_t sz)
 {
 	ibuf_reserve_xc(buf, sz);
 	ssize_t n = coio_read_ahead(coio, buf->wpos, sz, ibuf_unused(buf));
+	if (n < 0)
+		return -1;
 	buf->wpos += n;
 	return n;
 }
@@ -61,6 +63,8 @@ coio_bread_timeout(struct ev_io *coio, struct ibuf *buf, size_t sz,
 	ibuf_reserve_xc(buf, sz);
 	ssize_t n = coio_read_ahead_timeout(coio, buf->wpos, sz, ibuf_unused(buf),
 			                    timeout);
+	if (n < 0)
+		return -1;
 	buf->wpos += n;
 	return n;
 }
@@ -71,6 +75,8 @@ coio_breadn(struct ev_io *coio, struct ibuf *buf, size_t sz)
 {
 	ibuf_reserve_xc(buf, sz);
 	ssize_t n = coio_readn_ahead(coio, buf->wpos, sz, ibuf_unused(buf));
+	if (n < 0)
+		return -1;
 	buf->wpos += n;
 	return n;
 }
@@ -87,6 +93,8 @@ coio_breadn_timeout(struct ev_io *coio, struct ibuf *buf, size_t sz,
 	ibuf_reserve_xc(buf, sz);
 	ssize_t n = coio_readn_ahead_timeout(coio, buf->wpos, sz, ibuf_unused(buf),
 			                     timeout);
+	if (n < 0)
+		return -1;
 	buf->wpos += n;
 	return n;
 }
