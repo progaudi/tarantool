@@ -335,8 +335,9 @@ relay_final_join_f(va_list ap)
 
 	/* Send all WALs until stop_vclock */
 	assert(relay->stream.write != NULL);
-	recover_remaining_wals(relay->r, &relay->stream,
-			       &relay->stop_vclock, true);
+	if (recover_remaining_wals(relay->r, &relay->stream,
+				   &relay->stop_vclock, true) != 0)
+		diag_raise();
 	assert(vclock_compare(&relay->r->vclock, &relay->stop_vclock) == 0);
 	return 0;
 }
@@ -492,11 +493,9 @@ relay_process_wal_event(struct wal_watcher *watcher, unsigned events)
 		 */
 		return;
 	}
-	try {
-		recover_remaining_wals(relay->r, &relay->stream, NULL,
-				       (events & WAL_EVENT_ROTATE) != 0);
-	} catch (Exception *e) {
-		relay_set_error(relay, e);
+	if (recover_remaining_wals(relay->r, &relay->stream, NULL,
+				   (events & WAL_EVENT_ROTATE) != 0) != 0) {
+		relay_set_error(relay, diag_last_error(diag_get()));
 		fiber_cancel(fiber());
 	}
 }
@@ -697,6 +696,8 @@ relay_subscribe(struct replica *replica, int fd, uint64_t sync,
 	vclock_copy(&relay->local_vclock_at_subscribe, &replicaset.vclock);
 	relay->r = recovery_new(cfg_gets("wal_dir"), false,
 			        replica_clock);
+	if (relay->r == NULL)
+		diag_raise();
 	vclock_copy(&relay->tx.vclock, replica_clock);
 	relay->version_id = replica_version_id;
 

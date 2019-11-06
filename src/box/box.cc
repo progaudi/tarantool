@@ -1903,6 +1903,8 @@ local_recovery(const struct tt_uuid *instance_uuid,
 	recovery = recovery_new(cfg_gets("wal_dir"),
 				cfg_geti("force_recovery"),
 				checkpoint_vclock);
+	if (recovery == NULL)
+		diag_raise();
 
 	/*
 	 * Make sure we report the actual recovery position
@@ -1911,6 +1913,7 @@ local_recovery(const struct tt_uuid *instance_uuid,
 	box_vclock = &recovery->vclock;
 	auto guard = make_scoped_guard([&]{
 		box_vclock = &replicaset.vclock;
+		recovery_stop_local(recovery);
 		recovery_delete(recovery);
 	});
 
@@ -1920,7 +1923,8 @@ local_recovery(const struct tt_uuid *instance_uuid,
 	 * so we must reflect this in replicaset vclock to
 	 * not attempt to apply these rows twice.
 	 */
-	recovery_scan(recovery, &replicaset.vclock, &gc.vclock);
+	if (recovery_scan(recovery, &replicaset.vclock, &gc.vclock) != 0)
+		diag_raise();
 	say_info("instance vclock %s", vclock_to_string(&replicaset.vclock));
 
 	if (wal_dir_lock >= 0) {
@@ -1963,7 +1967,8 @@ local_recovery(const struct tt_uuid *instance_uuid,
 	memtx_engine_recover_snapshot_xc(memtx, checkpoint_vclock);
 
 	engine_begin_final_recovery_xc();
-	recover_remaining_wals(recovery, &wal_stream.base, NULL, false);
+	if (recover_remaining_wals(recovery, &wal_stream.base, NULL, false) != 0)
+		diag_raise();
 	engine_end_recovery_xc();
 	/*
 	 * Leave hot standby mode, if any, only after
@@ -1981,8 +1986,11 @@ local_recovery(const struct tt_uuid *instance_uuid,
 				break;
 			fiber_sleep(0.1);
 		}
-		recovery_stop_local(recovery);
-		recover_remaining_wals(recovery, &wal_stream.base, NULL, true);
+		if (recovery_stop_local(recovery) != 0)
+			diag_raise();
+		if (recover_remaining_wals(recovery, &wal_stream.base, NULL,
+					   true) != 0)
+			diag_raise();
 		/*
 		 * Advance replica set vclock to reflect records
 		 * applied in hot standby mode.
