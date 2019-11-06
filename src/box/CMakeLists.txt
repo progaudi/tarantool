@@ -32,6 +32,9 @@ target_link_libraries(box_error core stat)
 add_library(vclock STATIC vclock.c)
 target_link_libraries(vclock core)
 
+add_library(mclock STATIC mclock.c)
+target_link_libraries(mclock vclock core)
+
 add_library(xrow STATIC xrow.c iproto_constants.c)
 target_link_libraries(xrow server core small vclock misc box_error
                       scramble ${MSGPUCK_LIBRARIES})
@@ -125,6 +128,7 @@ add_library(box STATIC
     bind.c
     execute.c
     wal.c
+    mclock.c
     call.c
     merger.c
     ${lua_sources}
