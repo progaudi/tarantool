@@ -35,9 +35,8 @@ test_run:wait_cond(function() return box.info.replication[2].downstream.status =
 - true
 ...
 -- Delete an xlog file that is needed by the replica.
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 ---
-- ok
 ...
 xlog = fio.pathjoin(box.cfg.wal_dir, string.format('%020d.xlog', box.info.signature))
 ---
@@ -46,9 +45,8 @@ box.space.test:replace{1}
 ---
 - [1]
 ...
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 ---
-- ok
 ...
 box.space.test:replace{2}
 ---

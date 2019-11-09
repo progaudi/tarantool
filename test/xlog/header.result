@@ -34,6 +34,12 @@ test_run:cmd("push filter '".._TARANTOOL.."' to '<version>'")
 ---
 - true
 ...
+old_snapshot = box.snapshot
+---
+...
+box.snapshot = function () old_snapshot() box.internal.wal_rotate() return 'ok' end
+---
+...
 checkpoint_lsn = box.info.lsn
 ---
 ...
@@ -152,4 +158,7 @@ box.space._schema:delete({"layout_test"})
 test_run:cmd("clear filter")
 ---
 - true
+...
+box.snapshot = old_snapshot
+---
 ...

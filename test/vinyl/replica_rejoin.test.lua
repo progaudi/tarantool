@@ -26,6 +26,7 @@ test_run:cmd("restart server default")
 checkpoint_count = box.cfg.checkpoint_count
 box.cfg{checkpoint_count = 1}
 box.space.test:delete(1)
+box.internal.wal_rotate()
 box.snapshot()
 box.cfg{checkpoint_count = checkpoint_count}
 
@@ -48,9 +49,11 @@ test_run:cmd("stop server replica")
 
 -- Invoke garbage collector on the master.
 test_run:cmd("restart server default")
+
 checkpoint_count = box.cfg.checkpoint_count
 box.cfg{checkpoint_count = 1}
 box.space.test:delete(2)
+box.internal.wal_rotate()
 box.snapshot()
 box.cfg{checkpoint_count = checkpoint_count}
 

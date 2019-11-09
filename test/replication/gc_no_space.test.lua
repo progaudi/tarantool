@@ -28,6 +28,9 @@ function check_snap_count(count)
 end;
 test_run:cmd("setopt delimiter ''");
 
+old_snapshot = box.snapshot
+box.snapshot = function () box.internal.wal_rotate() old_snapshot() return 'ok' end
+
 box.cfg{checkpoint_count = 2}
 
 test_run:cleanup_cluster()

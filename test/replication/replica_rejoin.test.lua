@@ -33,10 +33,10 @@ checkpoint_count = box.cfg.checkpoint_count
 box.cfg{checkpoint_count = 1}
 _ = box.space.test:delete{1}
 _ = box.space.test:insert{10}
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 _ = box.space.test:delete{2}
 _ = box.space.test:insert{20}
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 _ = box.space.test:delete{3}
 _ = box.space.test:insert{30}
 fio = require('fio')
@@ -73,7 +73,7 @@ test_run:cmd("restart server default")
 checkpoint_count = box.cfg.checkpoint_count
 box.cfg{checkpoint_count = 1}
 for i = 1, 3 do box.space.test:delete{i * 10} end
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 for i = 1, 3 do box.space.test:insert{i * 100} end
 fio = require('fio')
 test_run:wait_cond(function() return #fio.glob(fio.pathjoin(box.cfg.wal_dir, '*.xlog')) == 1 end) or fio.pathjoin(box.cfg.wal_dir, '*.xlog')
@@ -118,7 +118,7 @@ replica_listen ~= nil
 box.cfg{replication = replica_listen}
 default_checkpoint_count = box.cfg.checkpoint_count
 box.cfg{checkpoint_count = 1}
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 box.cfg{checkpoint_count = default_checkpoint_count}
 fio = require('fio')
 test_run:wait_cond(function() return #fio.glob(fio.pathjoin(box.cfg.wal_dir, '*.xlog')) == 1 end) or fio.pathjoin(box.cfg.wal_dir, '*.xlog')
@@ -130,7 +130,7 @@ _ = test_run:wait_vclock('default', vclock)
 -- Restart the replica. It should successfully rebootstrap.
 test_run:cmd("restart server replica")
 box.space.test:select()
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 box.space.test:replace{2}
 
 -- Cleanup.

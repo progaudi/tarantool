@@ -63,6 +63,9 @@ box.cfg{checkpoint_count = 1}
 box.space.test:delete(1)
 ---
 ...
+box.internal.wal_rotate()
+---
+...
 box.snapshot()
 ---
 - ok
@@ -130,6 +133,9 @@ box.cfg{checkpoint_count = 1}
 ---
 ...
 box.space.test:delete(2)
+---
+...
+box.internal.wal_rotate()
 ---
 ...
 box.snapshot()

@@ -34,17 +34,15 @@ box.space.test:insert{1}
 ---
 - [1]
 ...
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 ---
-- ok
 ...
 box.space.test:insert{2}
 ---
 - [2]
 ...
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 ---
-- ok
 ...
 -- Manually remove all xlogs on master_quorum2 to break replication to master_quorum1.
 fio = require('fio')

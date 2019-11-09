@@ -13,6 +13,8 @@ function read_xlog(file)
 end;
 test_run:cmd("setopt delimiter ''");
 
+old_snapshot = box.snapshot
+box.snapshot = function () box.internal.wal_rotate() old_snapshot() return 'ok' end
 
 -- gh-2798 check for journal transaction encoding
 _ = box.schema.space.create('test'):create_index('pk')
@@ -44,3 +46,5 @@ data[6].HEADER.tsn == data[5].HEADER.tsn and data[6].HEADER.commit == nil
 data[7].HEADER.tsn == data[5].HEADER.tsn and data[7].HEADER.commit == nil
 data[8].HEADER.tsn == data[5].HEADER.tsn and data[8].HEADER.commit == true
 box.space.test:drop()
+
+box.snapshot = old_snapshot

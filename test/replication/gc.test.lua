@@ -4,6 +4,9 @@ replica_set = require('fast_replica')
 fiber = require('fiber')
 fio = require('fio')
 
+old_snapshot = box.snapshot
+box.snapshot = function () box.internal.wal_rotate() old_snapshot() return 'ok' end
+
 test_run:cleanup_cluster()
 test_run:cmd("create server replica with rpl_master=default, script='replication/replica.lua'")
 
@@ -270,3 +273,5 @@ box.error.injection.set("ERRINJ_RELAY_REPORT_INTERVAL", 0)
 box.schema.user.revoke('guest', 'replication')
 
 box.cfg{checkpoint_count = default_checkpoint_count}
+
+box.snapshot = old_snapshot

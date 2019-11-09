@@ -17,7 +17,7 @@ box.space.test:auto_increment{'before snapshot'}
 --
 -- this snapshot will go to the replica
 --
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 -- 
 -- create a replica, let it catch up somewhat
 --
@@ -37,7 +37,7 @@ box.space.test:auto_increment{'after snapshot - one more row'}
 --
 -- save snapshot and remove xlogs
 -- 
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 fio = require('fio')
 glob = fio.pathjoin(box.cfg.wal_dir, '*.xlog')
 files = fio.glob(glob)

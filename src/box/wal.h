@@ -205,10 +205,10 @@ struct wal_checkpoint {
 /**
  * Prepare WAL for checkpointing.
  *
- * This function flushes all pending changes and rotates the
- * current WAL. Checkpoint info is returned in @checkpoint.
- * It is supposed to be passed to wal_commit_checkpoint()
- * upon successful checkpoint creation.
+ * This function flushes all pending changes. Checkpoint
+ * info is returned in @checkpoint. It is supposed to be
+ * passed to wal_commit_checkpoint() upon successful
+ * checkpoint creation.
  */
 int
 wal_begin_checkpoint(struct wal_checkpoint *checkpoint);
@@ -220,6 +220,13 @@ wal_begin_checkpoint(struct wal_checkpoint *checkpoint);
  */
 void
 wal_commit_checkpoint(struct wal_checkpoint *checkpoint);
+
+/**
+ * Closes the current wal file which leads to a wal rotation
+ * after the next write.
+ */
+int
+wal_rotate();
 
 /**
  * Set the WAL size threshold exceeding which will trigger

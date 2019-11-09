@@ -12,6 +12,7 @@ server.deploy()
 server.admin("space = box.schema.space.create('test')")
 server.admin("index = box.space.test:create_index('primary')")
 server.admin("box.snapshot()")
+server.admin("box.internal.wal_rotate()")
 
 lsn = int(yaml.safe_load(server.admin("box.info.lsn", silent=True))[0])
 filename = str(lsn).zfill(20) + ".xlog"

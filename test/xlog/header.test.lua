@@ -19,6 +19,9 @@ test_run:cmd("setopt delimiter ''");
 test_run:cmd("push filter '"..box.info.uuid.."' to '<instance_uuid>'")
 test_run:cmd("push filter '".._TARANTOOL.."' to '<version>'")
 
+old_snapshot = box.snapshot
+box.snapshot = function () old_snapshot() box.internal.wal_rotate() return 'ok' end
+
 checkpoint_lsn = box.info.lsn
 
 -- SNAP files
@@ -58,3 +61,5 @@ dump_header(fio.pathjoin(box.cfg.wal_dir, xlog_name))
 box.space._schema:delete({"layout_test"})
 
 test_run:cmd("clear filter")
+
+box.snapshot = old_snapshot

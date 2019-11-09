@@ -8,6 +8,9 @@ box.snapshot()
 ---
 - ok
 ...
+box.internal.wal_rotate()
+---
+...
 box.space.test:insert{1, 'first tuple'}
 ---
 - [1, 'first tuple']

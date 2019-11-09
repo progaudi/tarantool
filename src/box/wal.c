@@ -556,6 +556,36 @@ wal_sync(void)
 	return rc;
 }
 
+static void
+wal_rotate_f(struct cmsg *base)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	if (xlog_is_open(&writer->current_wal) &&
+	    vclock_sum(&writer->current_wal.meta.vclock) !=
+	    vclock_sum(&writer->vclock))
+		xlog_close(&writer->current_wal, false);
+	free(base);
+}
+
+int
+wal_rotate()
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+
+	struct cmsg *base = (struct cmsg *)malloc(sizeof(struct cmsg));
+	if (base == NULL) {
+		diag_set(OutOfMemory, sizeof(struct cmsg),
+			 "runtime", "struct cmsg");
+		return -1;
+	}
+	static struct cmsg_hop route[] = {
+		{wal_rotate_f, NULL}
+	};
+	cmsg_init(base, route);
+	cpipe_push(&writer->wal_pipe, base);
+	return 0;
+}
+
 static int
 wal_begin_checkpoint_f(struct cbus_call_msg *data)
 {
@@ -569,18 +599,6 @@ wal_begin_checkpoint_f(struct cbus_call_msg *data)
 		 */
 		diag_set(ClientError, ER_CHECKPOINT_ROLLBACK);
 		return -1;
-	}
-	/*
-	 * Avoid closing the current WAL if it has no rows (empty).
-	 */
-	if (xlog_is_open(&writer->current_wal) &&
-	    vclock_sum(&writer->current_wal.meta.vclock) !=
-	    vclock_sum(&writer->vclock)) {
-
-		xlog_close(&writer->current_wal, false);
-		/*
-		 * The next WAL will be created on the first write.
-		 */
 	}
 	vclock_copy(&msg->vclock, &writer->vclock);
 	msg->wal_size = writer->checkpoint_wal_size;

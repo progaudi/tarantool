@@ -41,6 +41,7 @@
 #include "box/tuple_format.h"
 #include "box/lua/tuple.h"
 #include "mpstream.h"
+#include "box/wal.h"
 
 static uint32_t CTID_STRUCT_TUPLE_FORMAT_PTR;
 
@@ -244,12 +245,21 @@ lbox_tuple_format_new(struct lua_State *L)
 
 /* }}} */
 
+static int
+lbox_wal_rotate(struct lua_State *L)
+{
+	if (wal_rotate() != 0)
+		return luaT_error(L);
+	return 0;
+}
+
 void
 box_lua_misc_init(struct lua_State *L)
 {
 	static const struct luaL_Reg boxlib_internal[] = {
 		{"select", lbox_select},
 		{"new_tuple_format", lbox_tuple_format_new},
+		{"wal_rotate", lbox_wal_rotate},
 		{NULL, NULL}
 	};
 

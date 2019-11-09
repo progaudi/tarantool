@@ -17,10 +17,10 @@ test_run:cmd("stop server test")
 test_run:wait_cond(function() return box.info.replication[2].downstream.status == 'stopped' end, 10)
 
 -- Delete an xlog file that is needed by the replica.
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 xlog = fio.pathjoin(box.cfg.wal_dir, string.format('%020d.xlog', box.info.signature))
 box.space.test:replace{1}
-box.snapshot()
+box.internal.wal_rotate() box.snapshot()
 box.space.test:replace{2}
 fio.unlink(xlog)
 
