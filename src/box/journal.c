@@ -68,11 +68,13 @@ journal_entry_new(size_t n_rows, struct region *region,
 		diag_set(OutOfMemory, size, "region", "struct journal_entry");
 		return NULL;
 	}
+	entry->flags = 0;
 	entry->approx_len = 0;
 	entry->n_rows = n_rows;
 	entry->res = -1;
 	entry->on_done_cb = on_done_cb;
 	entry->on_done_cb_data = on_done_cb_data;
+	vclock_create(&entry->vclock);
 	return entry;
 }
 

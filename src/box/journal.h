@@ -34,6 +34,7 @@
 #include <stdbool.h>
 #include "salad/stailq.h"
 #include "fiber.h"
+#include "vclock.h"
 
 #if defined(__cplusplus)
 extern "C" {
@@ -45,6 +46,9 @@ struct journal_entry;
 /** Journal entry finalization callback typedef. */
 typedef void (*journal_entry_done_cb)(struct journal_entry *entry, void *data);
 
+#define JOURNAL_ENTRY_DONE (1 << 0)
+#define JOURNAL_ENTRY_SYNC (1 << 1)
+
 /**
  * An entry for an abstract journal.
  * Simply put, a write ahead log request.
@@ -53,6 +57,8 @@ typedef void (*journal_entry_done_cb)(struct journal_entry *entry, void *data);
  * first to a Raft leader before going to the local WAL.
  */
 struct journal_entry {
+	/** A bitmask with journal entry flags. */
+	uint32_t flags;
 	/** A helper to include requests into a FIFO queue. */
 	struct stailq_entry fifo;
 	/**
@@ -71,6 +77,10 @@ struct journal_entry {
 	 * A journal entry completion callback argument.
 	 */
 	void *on_done_cb_data;
+	/**
+	 * A journal vclock after the entry was written.
+	 */
+	struct vclock vclock;
 	/**
 	 * Approximate size of this request when encoded.
 	 */
@@ -103,7 +113,26 @@ journal_entry_new(size_t n_rows, struct region *region,
 static inline void
 journal_entry_complete(struct journal_entry *entry)
 {
+	entry->flags |= JOURNAL_ENTRY_DONE;
 	entry->on_done_cb(entry, entry->on_done_cb_data);
+}
+
+/**
+ * Test if journal entry processing is done.
+ */
+static inline bool
+journal_entry_is_done(const struct journal_entry *entry)
+{
+	return entry->flags & JOURNAL_ENTRY_DONE;
+}
+
+/**
+ * Test if journal should be synced after the journal.
+ */
+static inline bool
+journal_entry_is_sync(const struct journal_entry *entry)
+{
+	return entry->flags & JOURNAL_ENTRY_SYNC;
 }
 
 /**

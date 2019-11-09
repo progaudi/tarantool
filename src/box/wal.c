@@ -519,17 +519,12 @@ wal_free(void)
 	wal_writer_destroy(writer);
 }
 
-static int
-wal_sync_f(struct cbus_call_msg *msg)
+static void
+wal_entry_done_f(struct journal_entry *entry, void *data)
 {
-	(void)msg;
-	struct wal_writer *writer = &wal_writer_singleton;
-	if (writer->in_rollback.route != NULL) {
-		/* We're rolling back a failed write. */
-		diag_set(ClientError, ER_WAL_IO);
-		return -1;
-	}
-	return 0;
+	(void) entry;
+	struct fiber_cond *done_cond = (struct fiber_cond *)data;
+	fiber_cond_signal(done_cond);
 }
 
 int
@@ -540,20 +535,22 @@ wal_sync(void)
 		return -1;
 	});
 
-	struct wal_writer *writer = &wal_writer_singleton;
-	if (writer->wal_mode == WAL_NONE)
-		return 0;
-	if (!stailq_empty(&writer->rollback)) {
-		/* We're rolling back a failed write. */
+	struct fiber_cond done_cond;
+	fiber_cond_create(&done_cond);
+
+	size_t region_svp = region_used(&fiber()->gc);
+	struct journal_entry *entry;
+	entry = journal_entry_new(0, &fiber()->gc, wal_entry_done_f, &done_cond);
+	journal_write(entry);
+	while (!journal_entry_is_done(entry))
+		fiber_cond_wait(&done_cond);
+	int64_t res = entry->res;
+	region_truncate(&fiber()->gc, region_svp);
+	if (res < 0) {
 		diag_set(ClientError, ER_WAL_IO);
 		return -1;
 	}
-	bool cancellable = fiber_set_cancellable(false);
-	struct cbus_call_msg msg;
-	int rc = cbus_call(&writer->wal_pipe, &writer->tx_prio_pipe,
-			   &msg, wal_sync_f, NULL, TIMEOUT_INFINITY);
-	fiber_set_cancellable(cancellable);
-	return rc;
+	return 0;
 }
 
 static void
@@ -586,52 +583,27 @@ wal_rotate()
 	return 0;
 }
 
-static int
-wal_begin_checkpoint_f(struct cbus_call_msg *data)
-{
-	struct wal_checkpoint *msg = (struct wal_checkpoint *) data;
-	struct wal_writer *writer = &wal_writer_singleton;
-	if (writer->in_rollback.route != NULL) {
-		/*
-		 * We're rolling back a failed write and so
-		 * can't make a checkpoint - see the comment
-		 * in wal_begin_checkpoint() for the explanation.
-		 */
-		diag_set(ClientError, ER_CHECKPOINT_ROLLBACK);
-		return -1;
-	}
-	vclock_copy(&msg->vclock, &writer->vclock);
-	msg->wal_size = writer->checkpoint_wal_size;
-	return 0;
-}
-
 int
 wal_begin_checkpoint(struct wal_checkpoint *checkpoint)
 {
-	struct wal_writer *writer = &wal_writer_singleton;
-	if (writer->wal_mode == WAL_NONE) {
-		vclock_copy(&checkpoint->vclock, &writer->vclock);
-		checkpoint->wal_size = 0;
-		return 0;
-	}
-	if (!stailq_empty(&writer->rollback)) {
-		/*
-		 * If cascading rollback is in progress, in-memory
-		 * indexes can contain changes scheduled for rollback.
-		 * If we made a checkpoint, we could write them to
-		 * the snapshot. So we abort checkpointing in this
-		 * case.
-		 */
+	struct fiber_cond done_cond;
+	fiber_cond_create(&done_cond);
+
+	size_t region_svp = region_used(&fiber()->gc);
+	struct journal_entry *entry;
+	entry = journal_entry_new(0, &fiber()->gc, wal_entry_done_f, &done_cond);
+	entry->flags |= JOURNAL_ENTRY_SYNC;
+	journal_write(entry);
+	while (!journal_entry_is_done(entry))
+		fiber_cond_wait(&done_cond);
+	if (entry->res < 0) {
 		diag_set(ClientError, ER_CHECKPOINT_ROLLBACK);
+		region_truncate(&fiber()->gc, region_svp);
 		return -1;
 	}
-	bool cancellable = fiber_set_cancellable(false);
-	int rc = cbus_call(&writer->wal_pipe, &writer->tx_prio_pipe,
-			   &checkpoint->base, wal_begin_checkpoint_f, NULL,
-			   TIMEOUT_INFINITY);
-	fiber_set_cancellable(cancellable);
-	if (rc != 0)
-		return -1;
+	vclock_copy(&checkpoint->vclock, &entry->vclock);
+	checkpoint->wal_size = entry->approx_len;
+	region_truncate(&fiber()->gc, region_svp);
 	return 0;
 }
 
@@ -970,8 +942,11 @@ wal_assign_lsn(struct vclock *vclock_diff, struct vclock *base,
  */
 static ssize_t
 wal_write_xlog_batch(struct wal_writer *writer, struct stailq *input,
-		     struct stailq *output, struct vclock *vclock_diff)
+		     struct stailq *output)
 {
+	struct vclock vclock_diff;
+	vclock_create(&vclock_diff);
+	struct vclock *prev_vclock = &writer->vclock;
 	struct xlog *l = &writer->current_wal;
 	ssize_t rc;
 	do {
@@ -979,11 +954,15 @@ wal_write_xlog_batch(struct wal_writer *writer, struct stailq *input,
 			stailq_shift_entry(input, struct journal_entry, fifo);
 		stailq_add_tail(output, &entry->fifo);
 
-		wal_assign_lsn(vclock_diff, &writer->vclock,
+		wal_assign_lsn(&vclock_diff, prev_vclock,
 			       entry->rows, entry->rows + entry->n_rows);
-		entry->res = vclock_sum(vclock_diff) +
-			     vclock_sum(&writer->vclock);
+		vclock_copy(&entry->vclock, prev_vclock);
+		vclock_merge(&entry->vclock, &vclock_diff);
+		entry->res = vclock_sum(&entry->vclock);
+		prev_vclock = &entry->vclock;
 		rc = xlog_write_entry(l, entry);
+		if (journal_entry_is_sync(entry))
+			break;
 	} while (rc == 0 && !stailq_empty(input));
 	/* If log was not flushed then flush it explicitly. */
 	if (rc == 0)
@@ -997,14 +976,6 @@ wal_write_to_disk(struct cmsg *msg)
 	struct wal_writer *writer = &wal_writer_singleton;
 	struct wal_msg *wal_msg = (struct wal_msg *) msg;
 	struct error *error;
-
-	/*
-	 * Track all vclock changes made by this batch into
-	 * vclock_diff variable and then apply it into writers'
-	 * vclock after each xlog flush.
-	 */
-	struct vclock vclock_diff;
-	vclock_create(&vclock_diff);
 
 	ERROR_INJECT_SLEEP(ERRINJ_WAL_DELAY);
 
@@ -1056,8 +1027,7 @@ wal_write_to_disk(struct cmsg *msg)
 	struct stailq output;
 	stailq_create(&output);
 	while (!stailq_empty(&input)) {
-		ssize_t rc = wal_write_xlog_batch(writer, &input, &output,
-						  &vclock_diff);
+		ssize_t rc = wal_write_xlog_batch(writer, &input, &output);
 		if (rc < 0) {
 			/*
 			 * Put processed entries and tail of write
@@ -1066,13 +1036,16 @@ wal_write_to_disk(struct cmsg *msg)
 			stailq_concat(&wal_msg->rollback, &output);
 			stailq_concat(&wal_msg->rollback, &input);
 		} else {
+			writer->checkpoint_wal_size += rc;
+			struct journal_entry *last_entry =
+			stailq_last_entry(&output, struct journal_entry, fifo);
+			vclock_copy(&writer->vclock, &last_entry->vclock);
+			last_entry->approx_len = writer->checkpoint_wal_size;
 			/*
 			 * Schedule processed entries to commit
 			 * and update the wal vclock.
 			 */
 			stailq_concat(&wal_msg->commit, &output);
-			writer->checkpoint_wal_size += rc;
-			vclock_merge(&writer->vclock, &vclock_diff);
 		}
 	}
 
@@ -1247,6 +1220,8 @@ wal_write_in_wal_mode_none(struct journal *journal,
 	wal_assign_lsn(&vclock_diff, &writer->vclock, entry->rows,
 		       entry->rows + entry->n_rows);
 	vclock_merge(&writer->vclock, &vclock_diff);
+	vclock_copy(&entry->vclock, &writer->vclock);
+	entry->approx_len = 0;
 	vclock_copy(&replicaset.vclock, &writer->vclock);
 	entry->res = vclock_sum(&writer->vclock);
 	journal_entry_complete(entry);

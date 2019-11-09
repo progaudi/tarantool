@@ -178,7 +178,7 @@ wait_gc(1) or box.info.gc()
 ---
 - true
 ...
-wait_xlog(2) or fio.listdir('./master')
+wait_xlog(3) or fio.listdir('./master')
 ---
 - true
 ...
@@ -211,7 +211,7 @@ wait_gc(1) or box.info.gc()
 ---
 - true
 ...
-wait_xlog(0) or fio.listdir('./master')
+wait_xlog(1) or fio.listdir('./master')
 ---
 - true
 ...
@@ -328,7 +328,7 @@ wait_gc(1) or box.info.gc()
 ---
 - true
 ...
-wait_xlog(2) or fio.listdir('./master')
+wait_xlog(3) or fio.listdir('./master')
 ---
 - true
 ...
@@ -429,12 +429,12 @@ box.snapshot()
 ---
 - ok
 ...
-wait_xlog(3) or fio.listdir('./master')
+wait_xlog(4) or fio.listdir('./master')
 ---
 - true
 ...
 -- Delete the replica from the cluster table and check that
--- all xlog files are removed.
+-- all xlog files before the last snapshot are removed.
 test_run:cleanup_cluster()
 ---
 ...
@@ -442,7 +442,7 @@ box.snapshot()
 ---
 - ok
 ...
-wait_xlog(0, 10) or fio.listdir('./master')
+wait_xlog(1, 10) or fio.listdir('./master')
 ---
 - true
 ...
