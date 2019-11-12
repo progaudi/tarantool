@@ -257,9 +257,11 @@ recover_xlog(struct recovery *r, struct xstream *stream,
 		 * the file is fully read: it's fully read only
 		 * when EOF marker has been read, see i.eof_read
 		 */
-		if (stop_vclock != NULL &&
-		    r->vclock.signature >= stop_vclock->signature)
-			return 0;
+		if (stop_vclock != NULL) {
+			int rc = vclock_compare(&r->vclock, stop_vclock);
+			if (rc >= 0 && rc != VCLOCK_ORDER_UNDEFINED)
+				return 0;
+		}
 		int64_t current_lsn = vclock_get(&r->vclock, row.replica_id);
 		if (row.lsn <= current_lsn)
 			continue; /* already applied, skip */
@@ -363,9 +365,12 @@ recover_current_wal:
 	if (xlog_cursor_is_eof(&r->cursor))
 		recovery_close_log(r);
 
-	if (stop_vclock != NULL && vclock_compare(&r->vclock, stop_vclock) != 0) {
-		diag_set(XlogGapError, &r->vclock, stop_vclock);
-		return -1;
+	if (stop_vclock != NULL) {
+		int rc = vclock_compare(&r->vclock, stop_vclock);
+		if (rc < 0 || rc == VCLOCK_ORDER_UNDEFINED) {
+			diag_set(XlogGapError, &r->vclock, stop_vclock);
+			return -1;
+		}
 	}
 
 	region_free(&fiber()->gc);

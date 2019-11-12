@@ -135,7 +135,9 @@ lbox_pushrelay(lua_State *L, struct relay *relay)
 		lua_pushstring(L, "follow");
 		lua_settable(L, -3);
 		lua_pushstring(L, "vclock");
-		lbox_pushvclock(L, relay_vclock(relay));
+		struct vclock vclock;
+		relay_vclock(relay, &vclock);
+		lbox_pushvclock(L, &vclock);
 		lua_settable(L, -3);
 		lua_pushstring(L, "idle");
 		lua_pushnumber(L, ev_monotonic_now(loop()) -

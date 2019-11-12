@@ -45,6 +45,9 @@
 #include "replication.h"
 #include "mclock.h"
 #include "xrow_buf.h"
+#include "recovery.h"
+#include "coio.h"
+#include "xrow_io.h"
 
 enum {
 	/**
@@ -183,6 +186,14 @@ struct wal_writer
 	 * without xlog files access.
 	 */
 	struct xrow_buf xrow_buf;
+	/** xrow buffer condition signaled when a buffer write was done. */
+	struct fiber_cond xrow_buf_cond;
+	/**
+	 * Wal exit is not gracefull so there is a helper trigger
+	 * which is used in order to infor all relays that wal was
+	 * destroyed.
+	 */
+	struct rlist on_wal_exit;
 };
 
 struct wal_msg {
@@ -448,6 +459,8 @@ wal_writer_create(struct wal_writer *writer, enum wal_mode wal_mode,
 	fiber_cond_create(&writer->wal_gc_cond);
 	writer->gc_wal_vclock = NULL;
 	vclock_create(&writer->gc_first_vclock);
+
+	rlist_create(&writer->on_wal_exit);
 }
 
 /** Destroy a WAL writer structure. */
@@ -1208,6 +1221,7 @@ wal_write_to_disk(struct cmsg *msg)
 			stailq_concat(&wal_msg->rollback, &input);
 		} else {
 			xrow_buf_tx_commit(&writer->xrow_buf);
+			fiber_cond_signal(&writer->xrow_buf_cond);
 			/*
 			 * Schedule processed entries to commit
 			 * and update the wal vclock.
@@ -1302,6 +1316,7 @@ wal_writer_f(va_list ap)
 	 * should be done in the wal thread.
 	 */
 	xrow_buf_create(&writer->xrow_buf);
+	fiber_cond_create(&writer->xrow_buf_cond);
 
 	/** Initialize eio in this thread */
 	coio_enable();
@@ -1346,6 +1361,9 @@ wal_writer_f(va_list ap)
 
 	if (xlog_is_open(&vy_log_writer.xlog))
 		xlog_close(&vy_log_writer.xlog, false);
+
+	/* Inform relays that wal is exiting. */
+	trigger_run(&writer->on_wal_exit, NULL);
 
 	cpipe_destroy(&writer->tx_prio_pipe);
 	xrow_buf_destroy(&writer->xrow_buf);
@@ -1614,49 +1632,6 @@ wal_notify_watchers(struct wal_writer *writer, unsigned events)
 		wal_watcher_notify(watcher, events);
 }
 
-struct wal_relay_status_update_msg {
-	struct cbus_call_msg base;
-	uint32_t replica_id;
-	struct vclock vclock;
-};
-
-static int
-wal_relay_status_update_f(struct cbus_call_msg *base)
-{
-	struct wal_writer *writer = &wal_writer_singleton;
-	struct wal_relay_status_update_msg *msg =
-		container_of(base, struct wal_relay_status_update_msg, base);
-	struct vclock old_vclock;
-	mclock_extract_row(&writer->mclock, msg->replica_id, &old_vclock);
-	if (writer->gc_wal_vclock != NULL &&
-	    vclock_order_changed(&old_vclock, writer->gc_wal_vclock,
-				 &msg->vclock))
-		fiber_cond_signal(&writer->wal_gc_cond);
-	mclock_update(&writer->mclock, msg->replica_id, &msg->vclock);
-	return 0;
-}
-
-void
-wal_relay_status_update(uint32_t replica_id, const struct vclock *vclock)
-{
-	struct wal_writer *writer = &wal_writer_singleton;
-	struct wal_relay_status_update_msg msg;
-	/*
-	 * We do not take anonymous replica in account. There is
-	 * no way to distinguish them but anonynous replica could
-	 * be rebootstrapped at any time.
-	 */
-	if (replica_id == 0)
-		return;
-	msg.replica_id = replica_id;
-	vclock_copy(&msg.vclock, vclock);
-	bool cancellable = fiber_set_cancellable(false);
-	cbus_call(&writer->wal_pipe, &writer->tx_prio_pipe,
-		  &msg.base, wal_relay_status_update_f, NULL,
-		  TIMEOUT_INFINITY);
-	fiber_set_cancellable(cancellable);
-}
-
 struct wal_relay_delete_msg {
 	struct cmsg base;
 	uint32_t replica_id;
@@ -1704,4 +1679,453 @@ wal_atfork()
 		xlog_atfork(&wal_writer_singleton.current_wal);
 	if (xlog_is_open(&vy_log_writer.xlog))
 		xlog_atfork(&vy_log_writer.xlog);
+}
+
+/*
+ * Relay reader fiber function.
+ * Read xrow encoded vclocks sent by the replica.
+ */
+static int
+wal_relay_reader_f(va_list ap)
+{
+	struct wal_writer *writer = va_arg(ap, struct wal_writer *);
+	struct wal_relay *wal_relay = va_arg(ap, struct wal_relay *);
+	uint32_t replica_id = wal_relay->replica->id;
+
+	mclock_update(&writer->mclock, replica_id, &wal_relay->replica_vclock);
+	fiber_cond_signal(&writer->wal_gc_cond);
+
+	struct ibuf ibuf;
+	struct ev_io io;
+	coio_create(&io, wal_relay->fd);
+	ibuf_create(&ibuf, &cord()->slabc, 1024);
+	while (!fiber_is_cancelled()) {
+		struct xrow_header row;
+		if (coio_read_xrow_timeout(&io, &ibuf, &row,
+					   replication_disconnect_timeout()) < 0) {
+			if (diag_is_empty(&wal_relay->diag))
+				diag_move(&fiber()->diag, &wal_relay->diag);
+			break;
+		}
+
+		struct vclock cur_vclock;
+		/* vclock is followed while decoding, zeroing it. */
+		vclock_create(&cur_vclock);
+		if (xrow_decode_vclock(&row, &cur_vclock) < 0)
+			break;
+
+		if (writer->gc_wal_vclock != NULL &&
+		    vclock_order_changed(&wal_relay->replica_vclock,
+					 writer->gc_wal_vclock, &cur_vclock))
+			fiber_cond_signal(&writer->wal_gc_cond);
+		vclock_copy(&wal_relay->replica_vclock, &cur_vclock);
+		mclock_update(&writer->mclock, replica_id, &cur_vclock);
+	}
+	ibuf_destroy(&ibuf);
+	fiber_cancel(wal_relay->fiber);
+	return 0;
+}
+
+struct wal_relay_stream {
+	struct xstream stream;
+	struct wal_relay *wal_relay;
+	struct ev_io io;
+};
+
+static int
+wal_relay_stream_write(struct xstream *stream, struct xrow_header *row)
+{
+	struct wal_relay_stream *wal_relay_stream =
+		container_of(stream, struct wal_relay_stream, stream);
+	struct wal_relay *wal_relay = wal_relay_stream->wal_relay;
+	/*
+	 * Remember the original row because filter could
+	 * change it.
+	 */
+	struct xrow_header *orig_row = row;
+	switch (wal_relay->on_filter(wal_relay, &row)) {
+	case WAL_RELAY_FILTER_PASS:
+	case WAL_RELAY_FILTER_ROW:
+		break;
+	case WAL_RELAY_FILTER_SKIP:
+		return 0;
+	case WAL_RELAY_FILTER_ERR:
+		return -1;
+	}
+	ERROR_INJECT_YIELD(ERRINJ_RELAY_SEND_DELAY);
+
+	vclock_follow_xrow(&wal_relay->vclock, orig_row);
+	int rc =  coio_write_xrow(&wal_relay_stream->io, row);
+	struct errinj *inj = errinj(ERRINJ_RELAY_TIMEOUT, ERRINJ_DOUBLE);
+	if (inj != NULL && inj->dparam > 0)
+		fiber_sleep(inj->dparam);
+
+	return rc >= 0? 0: -1;
+}
+
+/* Structure to provide arguments for file relaying cord. */
+struct wal_relay_from_file_args {
+	/* Wal writer. */
+	struct wal_writer *writer;
+	/* Wal realy structure. */
+	struct wal_relay *wal_relay;
+	/* Vclock to stop relaying on. */
+	struct vclock stop_vclock;
+};
+
+/*
+ * Relay from file cord function. This cord read log and
+ * sends data to replica.
+ */
+static int
+wal_relay_from_file_f(va_list ap)
+{
+	struct wal_relay_from_file_args *args =
+		va_arg(ap, struct wal_relay_from_file_args *);
+	/* Recover xlogs from files. */
+	struct recovery *recovery = recovery_new(args->writer->wal_dir.dirname,
+						 false,
+						 &args->wal_relay->vclock);
+	if (recovery == NULL)
+		return -1;
+	struct wal_relay_stream wal_relay_stream;
+	xstream_create(&wal_relay_stream.stream, wal_relay_stream_write);
+	wal_relay_stream.wal_relay = args->wal_relay;
+	coio_create(&wal_relay_stream.io, args->wal_relay->fd);
+
+	if (recover_remaining_wals(recovery, &wal_relay_stream.stream,
+	    &args->stop_vclock, true) != 0) {
+		recovery_delete(recovery);
+		return -1;
+	}
+	recovery_delete(recovery);
+	return 0;
+}
+
+static int
+wal_relay_from_file(struct wal_writer *writer, struct wal_relay *wal_relay)
+{
+	struct wal_relay_from_file_args args;
+	args.writer = writer;
+	args.wal_relay = wal_relay;
+
+	vclock_create(&args.stop_vclock);
+	if (vclock_is_set(&wal_relay->stop_vclock))
+		vclock_copy(&args.stop_vclock, &wal_relay->stop_vclock);
+	else
+		vclock_copy(&args.stop_vclock, &writer->vclock);
+
+	int rc = cord_costart(&wal_relay->cord, "file relay",
+			      wal_relay_from_file_f, &args);
+	if (rc == 0)
+		rc = cord_cojoin(&wal_relay->cord);
+	return rc;
+}
+
+static int
+wal_relay_send_hearthbeat(struct ev_io *io)
+{
+	struct xrow_header hearthbeat;
+	xrow_encode_timestamp(&hearthbeat, instance_id, ev_now(loop()));
+	return coio_write_xrow(io, &hearthbeat);
+}
+
+/* Wal relay fiber function. */
+static int
+wal_relay_from_memory(struct wal_writer *writer, struct wal_relay *wal_relay)
+{
+	double last_row_time = 0;
+	struct xrow_buf_cursor cursor;
+	if (xrow_buf_cursor_create(&writer->xrow_buf, &cursor,
+				   &wal_relay->vclock) != 0)
+		return 0;
+	struct ev_io io;
+	coio_create(&io, wal_relay->fd);
+	/* Cursor was created and then we can process rows one by one. */
+	while (!fiber_is_cancelled()) {
+		if (vclock_is_set(&wal_relay->stop_vclock)) {
+			int rc =  vclock_compare(&wal_relay->stop_vclock,
+						 &wal_relay->vclock);
+			if (rc <= 0 && rc != VCLOCK_ORDER_UNDEFINED)
+				return 1;
+		}
+		struct xrow_header *row;
+		void *data;
+		size_t size;
+		int rc = xrow_buf_cursor_next(&writer->xrow_buf, &cursor,
+					     &row, &data, &size);
+		if (rc < 0) {
+			/*
+			 * Wal memory buffer was rotated and we are not in
+			 * memory.
+			 */
+			return 0;
+		}
+		if (rc > 0) {
+			/*
+			 * There are no more rows in a buffer. Wait
+			 * until wal wrote new ones or timeout was
+			 * exceeded and send a heartbeat message.
+			 */
+			double timeout = replication_timeout;
+			struct errinj *inj = errinj(ERRINJ_RELAY_REPORT_INTERVAL,
+						    ERRINJ_DOUBLE);
+			if (inj != NULL && inj->dparam != 0)
+				timeout = inj->dparam;
+
+			fiber_cond_wait_deadline(&writer->xrow_buf_cond,
+						 last_row_time + timeout);
+			if (ev_monotonic_now(loop()) - last_row_time >
+			    timeout) {
+				/* Timeout was exceeded - send a heartbeat. */
+				if (wal_relay_send_hearthbeat(&io) < 0)
+					return -1;
+				last_row_time = ev_monotonic_now(loop());
+			}
+			continue;
+		}
+		ERROR_INJECT(ERRINJ_WAL_MEM_IGNORE, return 0);
+		/*
+		 * Remember the original row because filter could
+		 * change it.
+		 */
+		struct xrow_header *orig_row = row;
+		switch (wal_relay->on_filter(wal_relay, &row)) {
+		case WAL_RELAY_FILTER_PASS:
+		case WAL_RELAY_FILTER_ROW:
+			break;
+		case WAL_RELAY_FILTER_SKIP:
+			continue;
+		case WAL_RELAY_FILTER_ERR:
+			return -1;
+		}
+
+		ERROR_INJECT(ERRINJ_RELAY_SEND_DELAY, { return 0;});
+
+		last_row_time = ev_monotonic_now(loop());
+		if (coio_write_xrow(&io, row) < 0)
+			return -1;
+		vclock_follow_xrow(&wal_relay->vclock, orig_row);
+		struct errinj *inj = errinj(ERRINJ_RELAY_TIMEOUT, ERRINJ_DOUBLE);
+		if (inj != NULL && inj->dparam > 0)
+			fiber_sleep(inj->dparam);
+	}
+	return -1;
+}
+
+static int
+wal_relay_on_wal_exit(struct trigger *trigger, void *event)
+{
+	(void) event;
+	struct wal_relay *wal_relay = (struct wal_relay *)trigger->data;
+	if (wal_relay->cord.id > 0)
+		pthread_cancel(wal_relay->cord.id);
+	fiber_cancel(wal_relay->fiber);
+	wal_relay->is_wal_exit = true;
+	return 0;
+}
+
+/* Wake relay when wal_relay finished. */
+static void
+wal_relay_done(struct cmsg *base)
+{
+	struct wal_relay *msg =
+		container_of(base, struct wal_relay, base);
+	msg->done = true;
+	fiber_cond_signal(&msg->done_cond);
+}
+
+static int
+wal_relay_f(va_list ap)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	struct wal_relay *wal_relay = va_arg(ap, struct wal_relay *);
+
+	struct trigger on_wal_exit;
+	trigger_create(&on_wal_exit, wal_relay_on_wal_exit, wal_relay, NULL);
+	trigger_add(&writer->on_wal_exit, &on_wal_exit);
+
+	struct fiber *reader = NULL;
+	if (wal_relay->replica != NULL && wal_relay->replica->id != REPLICA_ID_NIL) {
+		/* Start fiber for receiving replica acks. */
+		char name[FIBER_NAME_MAX];
+		snprintf(name, sizeof(name), "%s:%s", fiber()->name, "reader");
+		reader = fiber_new(name, wal_relay_reader_f);
+		if (reader == NULL) {
+			diag_move(&fiber()->diag, &wal_relay->diag);
+			return 0;
+		}
+		fiber_set_joinable(reader, true);
+		fiber_start(reader, writer, wal_relay);
+
+		struct ev_io io;
+		coio_create(&io, wal_relay->fd);
+		if (wal_relay_send_hearthbeat(&io) < 0)
+			goto done;
+	}
+
+	while (wal_relay_from_memory(writer, wal_relay) == 0 &&
+	       wal_relay_from_file(writer, wal_relay) == 0);
+
+done:
+	if (wal_relay->is_wal_exit)
+		return 0;
+	trigger_clear(&on_wal_exit);
+	if (diag_is_empty(&wal_relay->diag))
+		diag_move(&fiber()->diag, &wal_relay->diag);
+
+	if (reader != NULL) {
+		/* Join ack reader fiber. */
+		fiber_cancel(reader);
+		fiber_join(reader);
+	}
+	if (wal_relay->is_wal_exit)
+		return 0;
+
+	static struct cmsg_hop done_route[] = {
+		{wal_relay_done, NULL}
+	};
+	cmsg_init(&wal_relay->base, done_route);
+	cpipe_push(&writer->tx_prio_pipe, &wal_relay->base);
+	wal_relay->fiber = NULL;
+	return 0;
+}
+
+static void
+wal_relay_attach(struct cmsg *base)
+{
+	struct wal_relay *wal_relay = container_of(base, struct wal_relay, base);
+	wal_relay->fiber = fiber_new("wal relay fiber", wal_relay_f);
+	wal_relay->cord.id = 0;
+	wal_relay->is_wal_exit = false;
+	fiber_start(wal_relay->fiber, wal_relay);
+}
+
+static void
+wal_relay_cancel(struct cmsg *base)
+{
+	struct wal_relay *wal_relay = container_of(base, struct wal_relay,
+						 cancel_msg);
+	/*
+	 * A relay was cancelled so cancel corresponding
+	 * fiber in the wal thread if it still alive.
+	 */
+	if (wal_relay->fiber != NULL)
+		fiber_cancel(wal_relay->fiber);
+}
+
+int
+wal_relay(struct wal_relay *wal_relay, const struct vclock *vclock,
+	  const struct vclock *stop_vclock,  wal_relay_filter_cb on_filter, int fd,
+	  struct replica *replica)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	vclock_copy(&wal_relay->vclock, vclock);
+	vclock_create(&wal_relay->stop_vclock);
+	if (stop_vclock != NULL)
+		vclock_copy(&wal_relay->stop_vclock, stop_vclock);
+	else
+		vclock_clear(&wal_relay->stop_vclock);
+	wal_relay->on_filter = on_filter;
+	wal_relay->fd = fd;
+	wal_relay->replica = replica;
+	diag_create(&wal_relay->diag);
+	wal_relay->cancel_msg.route = NULL;
+
+	fiber_cond_create(&wal_relay->done_cond);
+	wal_relay->done = false;
+
+	static struct cmsg_hop route[] = {
+		{wal_relay_attach, NULL}
+	};
+	cmsg_init(&wal_relay->base, route);
+	cpipe_push(&writer->wal_pipe, &wal_relay->base);
+
+	/*
+	 * We do not use cbus_call because we should be able to
+	 * process this fiber cancelation and send a cancel request
+	 * to the wal cord to force wal detach.
+	 */
+	while (!wal_relay->done) {
+		if (fiber_is_cancelled() &&
+		    wal_relay->cancel_msg.route == NULL) {
+			/* Send a cancel message to a wal relay fiber. */
+			static struct cmsg_hop cancel_route[]= {
+				{wal_relay_cancel, NULL}};
+			cmsg_init(&wal_relay->cancel_msg, cancel_route);
+			cpipe_push(&writer->wal_pipe, &wal_relay->cancel_msg);
+		}
+		fiber_cond_wait(&wal_relay->done_cond);
+	}
+
+	if (!diag_is_empty(&wal_relay->diag)) {
+		diag_move(&wal_relay->diag, &fiber()->diag);
+		return -1;
+	}
+	if (fiber_is_cancelled()) {
+		diag_set(FiberIsCancelled);
+		return -1;
+	}
+	return 0;
+}
+
+struct wal_relay_vclock_msg {
+	struct cbus_call_msg base;
+	const struct wal_relay *wal_relay;
+	struct vclock *vclock;
+};
+
+static int
+wal_relay_vclock_f(struct cbus_call_msg *base)
+{
+	struct wal_relay_vclock_msg *msg =
+		container_of(base, struct wal_relay_vclock_msg, base);
+	vclock_copy(msg->vclock, &msg->wal_relay->replica_vclock);
+	return 0;
+}
+
+int
+wal_relay_vclock(const struct wal_relay *wal_relay, struct vclock *vclock)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+
+	struct wal_relay_vclock_msg msg;
+	msg.wal_relay = wal_relay;
+	msg.vclock = vclock;
+	bool cancellable = fiber_set_cancellable(false);
+	int rc = cbus_call(&writer->wal_pipe, &writer->tx_prio_pipe,
+			   &msg.base, wal_relay_vclock_f, NULL,
+			   TIMEOUT_INFINITY);
+	fiber_set_cancellable(cancellable);
+	return rc;
+}
+
+struct wal_relay_last_row_time_msg {
+	struct cbus_call_msg base;
+	const struct wal_relay *wal_relay;
+	double last_row_time;
+};
+
+static int
+wal_relay_last_row_time_f(struct cbus_call_msg *base)
+{
+	struct wal_relay_last_row_time_msg *msg =
+		container_of(base, struct wal_relay_last_row_time_msg, base);
+	msg->last_row_time = msg->wal_relay->last_row_time;
+	return 0;
+}
+
+double
+wal_relay_last_row_time(const struct wal_relay *wal_relay)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+
+	struct wal_relay_last_row_time_msg msg;
+	msg.wal_relay = wal_relay;
+	bool cancellable = fiber_set_cancellable(false);
+	cbus_call(&writer->wal_pipe, &writer->tx_prio_pipe,
+		  &msg.base, wal_relay_last_row_time_f, NULL,
+		  TIMEOUT_INFINITY);
+	fiber_set_cancellable(cancellable);
+	return msg.last_row_time;
 }

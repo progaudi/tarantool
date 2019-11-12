@@ -10,9 +10,11 @@ SERVERS = {'master_quorum1', 'master_quorum2'}
 test_run:create_cluster(SERVERS)
 test_run:wait_fullmesh(SERVERS)
 test_run:cmd("switch master_quorum1")
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", true)
 repl = box.cfg.replication
 box.cfg{replication = ""}
 test_run:cmd("switch master_quorum2")
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", true)
 box.space.test:insert{1}
 box.snapshot()
 box.space.test:insert{2}

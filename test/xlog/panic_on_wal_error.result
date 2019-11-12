@@ -19,6 +19,10 @@ _ = box.space.test:create_index('pk')
 -- reopen xlog
 --
 test_run:cmd("restart server default")
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", true)
+---
+- ok
+...
 box.space.test ~= nil
 ---
 - true
@@ -68,6 +72,10 @@ test_run:cmd("stop server replica")
 - true
 ...
 test_run:cmd("restart server default")
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", true)
+---
+- ok
+...
 box.space.test:auto_increment{'after snapshot'}
 ---
 - [2, 'after snapshot']
@@ -152,6 +160,10 @@ box.space.test:select{}
 test_run:cmd("switch default")
 ---
 - true
+...
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", false)
+---
+- ok
 ...
 test_run:cmd("stop server replica")
 ---

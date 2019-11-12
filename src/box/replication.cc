@@ -228,6 +228,9 @@ replica_set_id(struct replica *replica, uint32_t replica_id)
 {
 	assert(replica_id < VCLOCK_MAX);
 	assert(replica->id == REPLICA_ID_NIL); /* replica id is read-only */
+	/* If replica was anon then unregister it from wal. */
+	if (replica->anon)
+		wal_relay_delete(0);
 	replica->id = replica_id;
 
 	if (tt_uuid_is_equal(&INSTANCE_UUID, &replica->uuid)) {

@@ -80,10 +80,10 @@ relay_get_state(const struct relay *relay);
 /**
  * Returns relay's vclock
  * @param relay relay
- * @returns relay's vclock
+ * @param relay's vclock
  */
-const struct vclock *
-relay_vclock(const struct relay *relay);
+void
+relay_vclock(const struct relay *relay, struct vclock *vclock);
 
 /**
  * Returns relay's last_row_time

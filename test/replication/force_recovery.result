@@ -16,6 +16,10 @@ _ = box.space.test:create_index('primary')
 box.schema.user.grant('guest', 'replication')
 ---
 ...
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", true)
+---
+- ok
+...
 -- Deploy a replica.
 test_run:cmd("create server test with rpl_master=default, script='replication/replica.lua'")
 ---
@@ -85,6 +89,10 @@ test_run:cmd("switch default")
 ...
 box.cfg{force_recovery = false}
 ---
+...
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", false)
+---
+- ok
 ...
 -- Cleanup.
 test_run:cmd("stop server test")

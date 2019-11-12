@@ -184,6 +184,10 @@ test_run:cmd("stop server replica")
 - true
 ...
 test_run:cmd("restart server default")
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", true)
+---
+- ok
+...
 checkpoint_count = box.cfg.checkpoint_count
 ---
 ...
@@ -367,6 +371,10 @@ box.space.test:replace{2}
 test_run:cmd("switch default")
 ---
 - true
+...
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", false)
+---
+- ok
 ...
 box.cfg{replication = ''}
 ---
