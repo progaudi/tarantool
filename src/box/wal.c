@@ -43,6 +43,7 @@
 #include "cbus.h"
 #include "coio_task.h"
 #include "replication.h"
+#include "mclock.h"
 
 enum {
 	/**
@@ -154,6 +155,25 @@ struct wal_writer
 	 * Used for replication relays.
 	 */
 	struct rlist watchers;
+	/**
+	 * Matrix clock with all wal consumer vclocks.
+	 */
+	struct mclock mclock;
+	/**
+	 * Fiber condition signaled on matrix clock is updated.
+	 */
+	struct fiber_cond wal_gc_cond;
+	/**
+	 * Minimal known xlog vclock used to decide when
+	 * wal gc should be invoked. It is a wal vclockset
+	 * second cached value.
+	 */
+	const struct vclock *gc_wal_vclock;
+	/**
+	 * Vclock which preserves subsequent logs from
+	 * collecting. Ignored in case of no space error.
+	 */
+	struct vclock gc_first_vclock;
 };
 
 struct wal_msg {
@@ -335,6 +355,36 @@ tx_notify_checkpoint(struct cmsg *msg)
 	free(msg);
 }
 
+/*
+ * Shortcut function which returns the second vclock
+ * from a wal directory.
+ */
+static inline const struct vclock *
+second_vclock(struct wal_writer *writer)
+{
+	struct vclock *vclock = vclockset_first(&writer->wal_dir.index);
+	if (vclock != NULL)
+		vclock = vclockset_next(&writer->wal_dir.index, vclock);
+	return vclock;
+}
+
+/*
+ * Shortcut function which compares three vclocks and
+ * return true if the first one is not greater or equal than the
+ * second one whereas the third one is. Used in order to decide
+ * when a wal gc should be signaled.
+ */
+static inline bool
+vclock_order_changed(const struct vclock *old, const struct vclock *target,
+		     const struct vclock *new)
+{
+	int rc = vclock_compare(old, target);
+	if (rc >= 0 && rc != VCLOCK_ORDER_UNDEFINED)
+		return false;
+	rc = vclock_compare(new, target);
+	return rc >= 0 && rc != VCLOCK_ORDER_UNDEFINED;
+}
+
 /**
  * Initialize WAL writer context. Even though it's a singleton,
  * encapsulate the details just in case we may use
@@ -375,6 +425,12 @@ wal_writer_create(struct wal_writer *writer, enum wal_mode wal_mode,
 
 	mempool_create(&writer->msg_pool, &cord()->slabc,
 		       sizeof(struct wal_msg));
+
+	mclock_create(&writer->mclock);
+
+	fiber_cond_create(&writer->wal_gc_cond);
+	writer->gc_wal_vclock = NULL;
+	vclock_create(&writer->gc_first_vclock);
 }
 
 /** Destroy a WAL writer structure. */
@@ -494,6 +550,7 @@ wal_enable(void)
 	 */
 	if (xdir_scan(&writer->wal_dir))
 		return -1;
+	writer->gc_wal_vclock = second_vclock(writer);
 
 	/* Open the most recent WAL file. */
 	if (wal_open(writer) != 0)
@@ -674,20 +731,35 @@ wal_set_checkpoint_threshold(int64_t threshold)
 	fiber_set_cancellable(cancellable);
 }
 
-struct wal_gc_msg
+static void
+wal_gc_advance(struct wal_writer *writer)
 {
-	struct cbus_call_msg base;
-	const struct vclock *vclock;
-};
+	static struct cmsg_hop route[] = {
+		{ tx_notify_gc, NULL },
+	};
+	struct tx_notify_gc_msg *msg = malloc(sizeof(*msg));
+	if (msg != NULL) {
+		if (xdir_first_vclock(&writer->wal_dir, &msg->vclock) < 0)
+			vclock_copy(&msg->vclock, &writer->vclock);
+		cmsg_init(&msg->base, route);
+		cpipe_push(&writer->tx_prio_pipe, &msg->base);
+	} else
+		say_warn("failed to allocate gc notification message");
+}
 
 static int
-wal_collect_garbage_f(struct cbus_call_msg *data)
+wal_collect_garbage(struct wal_writer *writer)
 {
-	struct wal_writer *writer = &wal_writer_singleton;
-	const struct vclock *vclock = ((struct wal_gc_msg *)data)->vclock;
+	struct vclock *collect_vclock = &writer->gc_first_vclock;
+	struct vclock relay_min_vclock;
+	if (mclock_get(&writer->mclock, -1, &relay_min_vclock) == 0) {
+		int rc = vclock_compare(collect_vclock, &relay_min_vclock);
+		if (rc > 0 || rc == VCLOCK_ORDER_UNDEFINED)
+			collect_vclock = &relay_min_vclock;
+	}
 
 	if (!xlog_is_open(&writer->current_wal) &&
-	    vclock_sum(vclock) >= vclock_sum(&writer->vclock)) {
+	    vclock_sum(collect_vclock) >= vclock_sum(&writer->vclock)) {
 		/*
 		 * The last available WAL file has been sealed and
 		 * all registered consumers have done reading it.
@@ -699,27 +771,54 @@ wal_collect_garbage_f(struct cbus_call_msg *data)
 		 * required by registered consumers and delete all
 		 * older WAL files.
 		 */
-		vclock = vclockset_psearch(&writer->wal_dir.index, vclock);
+		collect_vclock = vclockset_match(&writer->wal_dir.index,
+						 collect_vclock);
 	}
-	if (vclock != NULL)
-		xdir_collect_garbage(&writer->wal_dir, vclock_sum(vclock),
-				     XDIR_GC_ASYNC);
+	if (collect_vclock != NULL) {
+		xdir_collect_garbage(&writer->wal_dir,
+				     vclock_sum(collect_vclock), XDIR_GC_ASYNC);
+		writer->gc_wal_vclock = second_vclock(writer);
+		wal_gc_advance(writer);
+	}
 
 	return 0;
 }
 
-void
-wal_collect_garbage(const struct vclock *vclock)
+struct wal_set_gc_first_vclock_msg {
+	struct cbus_call_msg base;
+	const struct vclock *vclock;
+};
+
+int
+wal_set_gc_first_vclock_f(struct cbus_call_msg *base)
 {
 	struct wal_writer *writer = &wal_writer_singleton;
-	if (writer->wal_mode == WAL_NONE)
+	struct wal_set_gc_first_vclock_msg *msg =
+		container_of(base, struct wal_set_gc_first_vclock_msg, base);
+	if (writer->gc_wal_vclock != NULL &&
+	    vclock_order_changed(&writer->gc_first_vclock,
+				 writer->gc_wal_vclock, msg->vclock))
+		fiber_cond_signal(&writer->wal_gc_cond);
+	vclock_copy(&writer->gc_first_vclock, msg->vclock);
+	return 0;
+}
+
+void
+wal_set_gc_first_vclock(const struct vclock *vclock)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	if (writer->wal_mode == WAL_NONE) {
+		vclock_copy(&writer->gc_first_vclock, vclock);
 		return;
-	struct wal_gc_msg msg;
+	}
+	struct wal_set_gc_first_vclock_msg msg;
 	msg.vclock = vclock;
 	bool cancellable = fiber_set_cancellable(false);
-	cbus_call(&writer->wal_pipe, &writer->tx_prio_pipe, &msg.base,
-		  wal_collect_garbage_f, NULL, TIMEOUT_INFINITY);
+	cbus_call(&writer->wal_pipe, &writer->tx_prio_pipe,
+		  &msg.base, wal_set_gc_first_vclock_f, NULL,
+		  TIMEOUT_INFINITY);
 	fiber_set_cancellable(cancellable);
+
 }
 
 static void
@@ -769,7 +868,8 @@ wal_opt_rotate(struct wal_writer *writer)
 	 * collection, see wal_collect_garbage().
 	 */
 	xdir_add_vclock(&writer->wal_dir, &writer->vclock);
-
+	if (writer->gc_wal_vclock == NULL)
+		writer->gc_wal_vclock = second_vclock(writer);
 	wal_notify_watchers(writer, WAL_EVENT_ROTATE);
 	return 0;
 }
@@ -824,6 +924,11 @@ retry:
 	}
 
 	xdir_collect_garbage(&writer->wal_dir, gc_lsn, XDIR_GC_REMOVE_ONE);
+	writer->gc_wal_vclock = second_vclock(writer);
+/*	if (vclock_compare(&writer->gc_first_vclock,
+			   writer->gc_wal_vclock) < 0)
+		vclock_copy(&writer->gc_first_vclock, writer->gc_wal_vclock);
+	*/
 	notify_gc = true;
 	goto retry;
 error:
@@ -840,20 +945,8 @@ out:
 	 * event and a failure to send this message isn't really
 	 * critical.
 	 */
-	if (notify_gc) {
-		static struct cmsg_hop route[] = {
-			{ tx_notify_gc, NULL },
-		};
-		struct tx_notify_gc_msg *msg = malloc(sizeof(*msg));
-		if (msg != NULL) {
-			if (xdir_first_vclock(&writer->wal_dir,
-					      &msg->vclock) < 0)
-				vclock_copy(&msg->vclock, &writer->vclock);
-			cmsg_init(&msg->base, route);
-			cpipe_push(&writer->tx_prio_pipe, &msg->base);
-		} else
-			say_warn("failed to allocate gc notification message");
-	}
+	if (notify_gc)
+		wal_gc_advance(writer);
 	return rc;
 }
 
@@ -1097,6 +1190,26 @@ wal_write_to_disk(struct cmsg *msg)
 	wal_notify_watchers(writer, WAL_EVENT_WRITE);
 }
 
+
+/*
+ * WAL garbage collection fiber.
+ * The fiber waits until writer mclock is updated
+ * and then compares the mclock lower bound with
+ * the oldest wal file.
+ */
+static int
+wal_gc_f(va_list ap)
+{
+	struct wal_writer *writer = va_arg(ap, struct wal_writer *);
+
+	while (!fiber_is_cancelled()) {
+		fiber_cond_wait(&writer->wal_gc_cond);
+		wal_collect_garbage(writer);
+	}
+
+	return 0;
+}
+
 /** WAL writer main loop.  */
 static int
 wal_writer_f(va_list ap)
@@ -1116,7 +1229,14 @@ wal_writer_f(va_list ap)
 	 */
 	cpipe_create(&writer->tx_prio_pipe, "tx_prio");
 
+	struct fiber *wal_gc_fiber = fiber_new("wal_gc", wal_gc_f);
+	fiber_set_joinable(wal_gc_fiber, true);
+	fiber_start(wal_gc_fiber, writer);
+
 	cbus_loop(&endpoint);
+
+	fiber_cancel(wal_gc_fiber);
+	fiber_join(wal_gc_fiber);
 
 	/*
 	 * Create a new empty WAL on shutdown so that we don't
@@ -1406,6 +1526,75 @@ wal_notify_watchers(struct wal_writer *writer, unsigned events)
 		wal_watcher_notify(watcher, events);
 }
 
+struct wal_relay_status_update_msg {
+	struct cbus_call_msg base;
+	uint32_t replica_id;
+	struct vclock vclock;
+};
+
+static int
+wal_relay_status_update_f(struct cbus_call_msg *base)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	struct wal_relay_status_update_msg *msg =
+		container_of(base, struct wal_relay_status_update_msg, base);
+	struct vclock old_vclock;
+	mclock_extract_row(&writer->mclock, msg->replica_id, &old_vclock);
+	if (writer->gc_wal_vclock != NULL &&
+	    vclock_order_changed(&old_vclock, writer->gc_wal_vclock,
+				 &msg->vclock))
+		fiber_cond_signal(&writer->wal_gc_cond);
+	mclock_update(&writer->mclock, msg->replica_id, &msg->vclock);
+	return 0;
+}
+
+void
+wal_relay_status_update(uint32_t replica_id, const struct vclock *vclock)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	struct wal_relay_status_update_msg msg;
+	msg.replica_id = replica_id;
+	vclock_copy(&msg.vclock, vclock);
+	bool cancellable = fiber_set_cancellable(false);
+	cbus_call(&writer->wal_pipe, &writer->tx_prio_pipe,
+		  &msg.base, wal_relay_status_update_f, NULL,
+		  TIMEOUT_INFINITY);
+	fiber_set_cancellable(cancellable);
+}
+
+struct wal_relay_delete_msg {
+	struct cmsg base;
+	uint32_t replica_id;
+};
+
+void
+wal_relay_delete_f(struct cmsg *base)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	struct wal_relay_delete_msg *msg =
+		container_of(base, struct wal_relay_delete_msg, base);
+	struct vclock vclock;
+	vclock_create(&vclock);
+	mclock_update(&writer->mclock, msg->replica_id, &vclock);
+	fiber_cond_signal(&writer->wal_gc_cond);
+	free(msg);
+}
+
+void
+wal_relay_delete(uint32_t replica_id)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	struct wal_relay_delete_msg *msg =
+		(struct wal_relay_delete_msg *)malloc(sizeof(*msg));
+	if (msg == NULL) {
+		say_error("Could not allocate relay delete message");
+		return;
+	}
+	static struct cmsg_hop route[] = {{wal_relay_delete_f, NULL}};
+	cmsg_init(&msg->base, route);
+	msg->replica_id = replica_id;
+	cpipe_push(&writer->wal_pipe, &msg->base);
+}
 
 /**
  * After fork, the WAL writer thread disappears.

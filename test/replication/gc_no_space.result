@@ -168,18 +168,12 @@ check_snap_count(2)
 gc = box.info.gc()
 ---
 ...
-#gc.consumers -- 3
----
-- 3
-...
+--#gc.consumers -- 3
 #gc.checkpoints -- 2
 ---
 - 2
 ...
-gc.signature == gc.consumers[1].signature
----
-- true
-...
+--gc.signature == gc.consumers[1].signature
 --
 -- Inject a ENOSPC error and check that the WAL thread deletes
 -- old WAL files to prevent the user from seeing the error.
@@ -207,18 +201,12 @@ check_snap_count(2)
 gc = box.info.gc()
 ---
 ...
-#gc.consumers -- 1
----
-- 1
-...
+--#gc.consumers -- 1
 #gc.checkpoints -- 2
 ---
 - 2
 ...
-gc.signature == gc.consumers[1].signature
----
-- true
-...
+--gc.signature == gc.consumers[1].signature
 --
 -- Check that the WAL thread never deletes WAL files that are
 -- needed for recovery from the last checkpoint, but may delete
@@ -248,10 +236,7 @@ check_snap_count(2)
 gc = box.info.gc()
 ---
 ...
-#gc.consumers -- 0
----
-- 0
-...
+--#gc.consumers -- 0
 #gc.checkpoints -- 2
 ---
 - 2
@@ -278,7 +263,4 @@ gc = box.info.gc()
 ---
 - 2
 ...
-gc.signature == gc.checkpoints[2].signature
----
-- true
-...
+--gc.signature == gc.checkpoints[2].signature

@@ -65,35 +65,6 @@ gc_cleanup_fiber_f(va_list);
 static int
 gc_checkpoint_fiber_f(va_list);
 
-/**
- * Comparator used for ordering gc_consumer objects by signature
- * in a binary tree.
- */
-static inline int
-gc_consumer_cmp(const struct gc_consumer *a, const struct gc_consumer *b)
-{
-	if (vclock_sum(&a->vclock) < vclock_sum(&b->vclock))
-		return -1;
-	if (vclock_sum(&a->vclock) > vclock_sum(&b->vclock))
-		return 1;
-	if ((intptr_t)a < (intptr_t)b)
-		return -1;
-	if ((intptr_t)a > (intptr_t)b)
-		return 1;
-	return 0;
-}
-
-rb_gen(MAYBE_UNUSED static inline, gc_tree_, gc_tree_t,
-       struct gc_consumer, node, gc_consumer_cmp);
-
-/** Free a consumer object. */
-static void
-gc_consumer_delete(struct gc_consumer *consumer)
-{
-	TRASH(consumer);
-	free(consumer);
-}
-
 /** Free a checkpoint object. */
 static void
 gc_checkpoint_delete(struct gc_checkpoint *checkpoint)
@@ -110,7 +81,6 @@ gc_init(void)
 
 	vclock_create(&gc.vclock);
 	rlist_create(&gc.checkpoints);
-	gc_tree_new(&gc.consumers);
 	fiber_cond_create(&gc.cleanup_cond);
 	checkpoint_schedule_cfg(&gc.checkpoint_schedule, 0, 0);
 	engine_collect_garbage(&gc.vclock);
@@ -142,15 +112,6 @@ gc_free(void)
 				 next_checkpoint) {
 		gc_checkpoint_delete(checkpoint);
 	}
-	/* Free all registered consumers. */
-	struct gc_consumer *consumer = gc_tree_first(&gc.consumers);
-	while (consumer != NULL) {
-		struct gc_consumer *next = gc_tree_next(&gc.consumers,
-							consumer);
-		gc_tree_remove(&gc.consumers, consumer);
-		gc_consumer_delete(consumer);
-		consumer = next;
-	}
 }
 
 /**
@@ -161,7 +122,6 @@ gc_free(void)
 static void
 gc_run_cleanup(void)
 {
-	bool run_wal_gc = false;
 	bool run_engine_gc = false;
 
 	/*
@@ -170,10 +130,11 @@ gc_run_cleanup(void)
 	 * checkpoints, plus we can't remove checkpoints that
 	 * are still in use.
 	 */
-	struct gc_checkpoint *checkpoint = NULL;
-	while (true) {
-		checkpoint = rlist_first_entry(&gc.checkpoints,
-				struct gc_checkpoint, in_checkpoints);
+	struct gc_checkpoint *checkpoint = NULL, *tmp;
+	rlist_foreach_entry_safe(checkpoint, &gc.checkpoints,
+				 in_checkpoints, tmp) {
+		if (checkpoint->is_join_readview)
+			continue;
 		if (gc.checkpoint_count <= gc.min_checkpoint_count)
 			break;
 		if (!rlist_empty(&checkpoint->refs))
@@ -187,23 +148,7 @@ gc_run_cleanup(void)
 	/* At least one checkpoint must always be available. */
 	assert(checkpoint != NULL);
 
-	/*
-	 * Find the vclock of the oldest WAL row to keep.
-	 * Note, we must keep all WALs created after the
-	 * oldest checkpoint, even if no consumer needs them.
-	 */
-	const struct vclock *vclock = (gc_tree_empty(&gc.consumers) ? NULL :
-				       &gc_tree_first(&gc.consumers)->vclock);
-	if (vclock == NULL ||
-	    vclock_sum(vclock) > vclock_sum(&checkpoint->vclock))
-		vclock = &checkpoint->vclock;
-
-	if (vclock_sum(vclock) > vclock_sum(&gc.vclock)) {
-		vclock_copy(&gc.vclock, vclock);
-		run_wal_gc = true;
-	}
-
-	if (!run_engine_gc && !run_wal_gc)
+	if (!run_engine_gc)
 		return; /* nothing to do */
 
 	/*
@@ -219,10 +164,10 @@ gc_run_cleanup(void)
 	 * we never remove the last checkpoint and the following
 	 * WALs so this may only affect backup checkpoints.
 	 */
-	if (run_engine_gc)
-		engine_collect_garbage(&checkpoint->vclock);
-	if (run_wal_gc)
-		wal_collect_garbage(vclock);
+	engine_collect_garbage(&checkpoint->vclock);
+	checkpoint = rlist_first_entry(&gc.checkpoints,
+					struct gc_checkpoint, in_checkpoints);
+	wal_set_gc_first_vclock(&checkpoint->vclock);
 }
 
 static int
@@ -278,28 +223,10 @@ void
 gc_advance(const struct vclock *vclock)
 {
 	/*
-	 * In case of emergency ENOSPC, the WAL thread may delete
-	 * WAL files needed to restore from backup checkpoints,
-	 * which would be kept by the garbage collector otherwise.
-	 * Bring the garbage collector vclock up to date.
+	 * Bring the garbage collector up to date with the oldest
+	 * wal xlog file.
 	 */
 	vclock_copy(&gc.vclock, vclock);
-
-	struct gc_consumer *consumer = gc_tree_first(&gc.consumers);
-	while (consumer != NULL &&
-	       vclock_sum(&consumer->vclock) < vclock_sum(vclock)) {
-		struct gc_consumer *next = gc_tree_next(&gc.consumers,
-							consumer);
-		assert(!consumer->is_inactive);
-		consumer->is_inactive = true;
-		gc_tree_remove(&gc.consumers, consumer);
-
-		say_crit("deactivated WAL consumer %s at %s", consumer->name,
-			 vclock_to_string(&consumer->vclock));
-
-		consumer = next;
-	}
-	gc_schedule_cleanup();
 }
 
 void
@@ -329,6 +256,10 @@ void
 gc_add_checkpoint(const struct vclock *vclock)
 {
 	struct gc_checkpoint *last_checkpoint = gc_last_checkpoint();
+	while (last_checkpoint != NULL && last_checkpoint->is_join_readview) {
+		last_checkpoint = rlist_prev_entry(last_checkpoint,
+						   in_checkpoints);
+	}
 	if (last_checkpoint != NULL &&
 	    vclock_sum(&last_checkpoint->vclock) == vclock_sum(vclock)) {
 		/*
@@ -351,6 +282,8 @@ gc_add_checkpoint(const struct vclock *vclock)
 	if (checkpoint == NULL)
 		panic("out of memory");
 
+	if (rlist_empty(&gc.checkpoints))
+		wal_set_gc_first_vclock(vclock);
 	rlist_create(&checkpoint->refs);
 	vclock_copy(&checkpoint->vclock, vclock);
 	rlist_add_tail_entry(&gc.checkpoints, checkpoint, in_checkpoints);
@@ -358,6 +291,47 @@ gc_add_checkpoint(const struct vclock *vclock)
 
 	gc_schedule_cleanup();
 }
+
+void
+gc_add_join_readview(const struct vclock *vclock)
+{
+	struct gc_checkpoint *checkpoint = calloc(1, sizeof(*checkpoint));
+	/*
+	 * It is not a fatal error if we could not prevent subsequent
+	 * from clearance.
+	 */
+	if (checkpoint == NULL) {
+		say_error("GC: could not add a join readview");
+		return;
+	}
+	if (rlist_empty(&gc.checkpoints))
+		wal_set_gc_first_vclock(vclock);
+	checkpoint->is_join_readview = true;
+	rlist_create(&checkpoint->refs);
+	vclock_copy(&checkpoint->vclock, vclock);
+	rlist_add_tail_entry(&gc.checkpoints, checkpoint, in_checkpoints);
+}
+
+void
+gc_del_join_readview(const struct vclock *vclock)
+{
+	struct gc_checkpoint *checkpoint;
+	rlist_foreach_entry(checkpoint, &gc.checkpoints, in_checkpoints) {
+		if (!checkpoint->is_join_readview ||
+		    vclock_compare(&checkpoint->vclock, vclock) != 0)
+			continue;
+		rlist_del(&checkpoint->in_checkpoints);
+		free(checkpoint);
+		checkpoint = rlist_first_entry(&gc.checkpoints,
+					       struct gc_checkpoint,
+					       in_checkpoints);
+		wal_set_gc_first_vclock(&checkpoint->vclock);
+		return;
+	}
+	/* A join readview was not found. */
+	say_error("GC: could del a join readview");
+}
+
 
 static int
 gc_do_checkpoint(void)
@@ -512,76 +486,4 @@ gc_unref_checkpoint(struct gc_checkpoint_ref *ref)
 {
 	rlist_del_entry(ref, in_refs);
 	gc_schedule_cleanup();
-}
-
-struct gc_consumer *
-gc_consumer_register(const struct vclock *vclock, const char *format, ...)
-{
-	struct gc_consumer *consumer = calloc(1, sizeof(*consumer));
-	if (consumer == NULL) {
-		diag_set(OutOfMemory, sizeof(*consumer),
-			 "malloc", "struct gc_consumer");
-		return NULL;
-	}
-
-	va_list ap;
-	va_start(ap, format);
-	vsnprintf(consumer->name, GC_NAME_MAX, format, ap);
-	va_end(ap);
-
-	vclock_copy(&consumer->vclock, vclock);
-	gc_tree_insert(&gc.consumers, consumer);
-	return consumer;
-}
-
-void
-gc_consumer_unregister(struct gc_consumer *consumer)
-{
-	if (!consumer->is_inactive) {
-		gc_tree_remove(&gc.consumers, consumer);
-		gc_schedule_cleanup();
-	}
-	gc_consumer_delete(consumer);
-}
-
-void
-gc_consumer_advance(struct gc_consumer *consumer, const struct vclock *vclock)
-{
-	if (consumer->is_inactive)
-		return;
-
-	int64_t signature = vclock_sum(vclock);
-	int64_t prev_signature = vclock_sum(&consumer->vclock);
-
-	assert(signature >= prev_signature);
-	if (signature == prev_signature)
-		return; /* nothing to do */
-
-	/*
-	 * Do not update the tree unless the tree invariant
-	 * is violated.
-	 */
-	struct gc_consumer *next = gc_tree_next(&gc.consumers, consumer);
-	bool update_tree = (next != NULL &&
-			    signature >= vclock_sum(&next->vclock));
-
-	if (update_tree)
-		gc_tree_remove(&gc.consumers, consumer);
-
-	vclock_copy(&consumer->vclock, vclock);
-
-	if (update_tree)
-		gc_tree_insert(&gc.consumers, consumer);
-
-	gc_schedule_cleanup();
-}
-
-struct gc_consumer *
-gc_consumer_iterator_next(struct gc_consumer_iterator *it)
-{
-	if (it->curr != NULL)
-		it->curr = gc_tree_next(&gc.consumers, it->curr);
-	else
-		it->curr = gc_tree_first(&gc.consumers);
-	return it->curr;
 }
