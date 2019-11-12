@@ -45,11 +45,8 @@ extern "C" {
 #endif /* defined(__cplusplus) */
 
 struct fiber;
-struct gc_consumer;
 
 enum { GC_NAME_MAX = 64 };
-
-typedef rb_node(struct gc_consumer) gc_node_t;
 
 /**
  * Garbage collector keeps track of all preserved checkpoints.
@@ -60,6 +57,8 @@ struct gc_checkpoint {
 	struct rlist in_checkpoints;
 	/** VClock of the checkpoint. */
 	struct vclock vclock;
+	/** True when it is a join readview. */
+	bool is_join_readview;
 	/**
 	 * List of checkpoint references, linked by
 	 * gc_checkpoint_ref::in_refs.
@@ -81,26 +80,6 @@ struct gc_checkpoint_ref {
 	char name[GC_NAME_MAX];
 };
 
-/**
- * The object of this type is used to prevent garbage
- * collection from removing WALs that are still in use.
- */
-struct gc_consumer {
-	/** Link in gc_state::consumers. */
-	gc_node_t node;
-	/** Human-readable name. */
-	char name[GC_NAME_MAX];
-	/** The vclock tracked by this consumer. */
-	struct vclock vclock;
-	/**
-	 * This flag is set if a WAL needed by this consumer was
-	 * deleted by the WAL thread on ENOSPC.
-	 */
-	bool is_inactive;
-};
-
-typedef rb_tree(struct gc_consumer) gc_tree_t;
-
 /** Garbage collection state. */
 struct gc_state {
 	/** VClock of the oldest WAL row available on the instance. */
@@ -121,8 +100,6 @@ struct gc_state {
 	 * to the tail. Linked by gc_checkpoint::in_checkpoints.
 	 */
 	struct rlist checkpoints;
-	/** Registered consumers, linked by gc_consumer::node. */
-	gc_tree_t consumers;
 	/** Fiber responsible for periodic checkpointing. */
 	struct fiber *checkpoint_fiber;
 	/** Schedule of periodic checkpoints. */
@@ -208,7 +185,6 @@ gc_free(void);
 
 /**
  * Advance the garbage collector vclock to the given position.
- * Deactivate WAL consumers that need older data.
  */
 void
 gc_advance(const struct vclock *vclock);
@@ -219,7 +195,7 @@ gc_advance(const struct vclock *vclock);
  *
  * Note, this function doesn't run garbage collector so
  * changes will take effect only after a new checkpoint
- * is created or a consumer is unregistered.
+ * is created.
  */
 void
 gc_set_min_checkpoint_count(int min_checkpoint_count);
@@ -238,6 +214,19 @@ gc_set_checkpoint_interval(double interval);
  */
 void
 gc_add_checkpoint(const struct vclock *vclock);
+
+/**
+ * Register a join readview in the garbage collector state in order
+ * to prevent subsequent logs clearance.
+ */
+void
+gc_add_join_readview(const struct vclock *vclock);
+
+/**
+ * Unregister a join readview from the garbage collector state.
+ */
+void
+gc_del_join_readview(const struct vclock *vclock);
 
 /**
  * Make a *manual* checkpoint.
@@ -282,58 +271,6 @@ gc_ref_checkpoint(struct gc_checkpoint *checkpoint,
  */
 void
 gc_unref_checkpoint(struct gc_checkpoint_ref *ref);
-
-/**
- * Register a consumer.
- *
- * This will stop garbage collection of WAL files newer than
- * @vclock until the consumer is unregistered or advanced.
- * @format... specifies a human-readable name of the consumer,
- * it will be used for listing the consumer in box.info.gc().
- *
- * Returns a pointer to the new consumer object or NULL on
- * memory allocation failure.
- */
-CFORMAT(printf, 2, 3)
-struct gc_consumer *
-gc_consumer_register(const struct vclock *vclock, const char *format, ...);
-
-/**
- * Unregister a consumer and invoke garbage collection
- * if needed.
- */
-void
-gc_consumer_unregister(struct gc_consumer *consumer);
-
-/**
- * Advance the vclock tracked by a consumer and
- * invoke garbage collection if needed.
- */
-void
-gc_consumer_advance(struct gc_consumer *consumer, const struct vclock *vclock);
-
-/**
- * Iterator over registered consumers. The iterator is valid
- * as long as the caller doesn't yield.
- */
-struct gc_consumer_iterator {
-	struct gc_consumer *curr;
-};
-
-/** Init an iterator over consumers. */
-static inline void
-gc_consumer_iterator_init(struct gc_consumer_iterator *it)
-{
-	it->curr = NULL;
-}
-
-/**
- * Iterate to the next registered consumer. Return a pointer
- * to the next consumer object or NULL if there is no more
- * consumers.
- */
-struct gc_consumer *
-gc_consumer_iterator_next(struct gc_consumer_iterator *it);
 
 #if defined(__cplusplus)
 } /* extern "C" */

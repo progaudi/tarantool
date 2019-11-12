@@ -1566,11 +1566,12 @@ box_process_register(struct ev_io *io, struct xrow_header *header)
 			  "wal_mode = 'none'");
 	}
 
-	struct gc_consumer *gc = gc_consumer_register(&replicaset.vclock,
-				"replica %s", tt_uuid_str(&instance_uuid));
-	if (gc == NULL)
-		diag_raise();
-	auto gc_guard = make_scoped_guard([&] { gc_consumer_unregister(gc); });
+	struct vclock register_vclock;
+	vclock_copy(&register_vclock, &replicaset.vclock);
+	gc_add_join_readview(&register_vclock);
+	auto gc_guard = make_scoped_guard([&] {
+		gc_del_join_readview(&register_vclock);
+	});
 
 	say_info("registering replica %s at %s",
 		 tt_uuid_str(&instance_uuid), sio_socketname(io->fd));
@@ -1609,12 +1610,8 @@ box_process_register(struct ev_io *io, struct xrow_header *header)
 	 * registration was complete and assign it to the
 	 * replica.
 	 */
-	gc_consumer_advance(gc, &stop_vclock);
 	replica = replica_by_uuid(&instance_uuid);
-	if (replica->gc != NULL)
-		gc_consumer_unregister(replica->gc);
-	replica->gc = gc;
-	gc_guard.is_active = false;
+	wal_relay_status_update(replica->id, &stop_vclock);
 }
 
 void
@@ -1708,11 +1705,12 @@ box_process_join(struct ev_io *io, struct xrow_header *header)
 	 * Register the replica as a WAL consumer so that
 	 * it can resume FINAL JOIN where INITIAL JOIN ends.
 	 */
-	struct gc_consumer *gc = gc_consumer_register(&replicaset.vclock,
-				"replica %s", tt_uuid_str(&instance_uuid));
-	if (gc == NULL)
-		diag_raise();
-	auto gc_guard = make_scoped_guard([&] { gc_consumer_unregister(gc); });
+	struct vclock join_vclock;
+	vclock_copy(&join_vclock, &replicaset.vclock);
+	gc_add_join_readview(&join_vclock);
+	auto gc_guard = make_scoped_guard([&] {
+		gc_del_join_readview(&join_vclock);
+	});
 
 	say_info("joining replica %s at %s",
 		 tt_uuid_str(&instance_uuid), sio_socketname(io->fd));
@@ -1757,17 +1755,8 @@ box_process_join(struct ev_io *io, struct xrow_header *header)
 	row.sync = header->sync;
 	if (coio_write_xrow(io, &row) < 0)
 		diag_raise();
-
-	/*
-	 * Advance the WAL consumer state to the position where
-	 * FINAL JOIN ended and assign it to the replica.
-	 */
-	gc_consumer_advance(gc, &stop_vclock);
 	replica = replica_by_uuid(&instance_uuid);
-	if (replica->gc != NULL)
-		gc_consumer_unregister(replica->gc);
-	replica->gc = gc;
-	gc_guard.is_active = false;
+	wal_relay_status_update(replica->id, &stop_vclock);
 }
 
 void

@@ -72,9 +72,9 @@ s:auto_increment{}
 check_wal_count(5)
 check_snap_count(2)
 gc = box.info.gc()
-#gc.consumers -- 3
+--#gc.consumers -- 3
 #gc.checkpoints -- 2
-gc.signature == gc.consumers[1].signature
+--gc.signature == gc.consumers[1].signature
 
 --
 -- Inject a ENOSPC error and check that the WAL thread deletes
@@ -87,9 +87,9 @@ errinj.info()['ERRINJ_WAL_FALLOCATE'].state -- 0
 check_wal_count(3)
 check_snap_count(2)
 gc = box.info.gc()
-#gc.consumers -- 1
+--#gc.consumers -- 1
 #gc.checkpoints -- 2
-gc.signature == gc.consumers[1].signature
+--gc.signature == gc.consumers[1].signature
 
 --
 -- Check that the WAL thread never deletes WAL files that are
@@ -104,7 +104,7 @@ errinj.info()['ERRINJ_WAL_FALLOCATE'].state -- 0
 check_wal_count(1)
 check_snap_count(2)
 gc = box.info.gc()
-#gc.consumers -- 0
+--#gc.consumers -- 0
 #gc.checkpoints -- 2
 gc.signature == gc.checkpoints[2].signature
 
@@ -116,4 +116,4 @@ test_run:cleanup_cluster()
 test_run:cmd("restart server default")
 gc = box.info.gc()
 #gc.checkpoints -- 2
-gc.signature == gc.checkpoints[2].signature
+--gc.signature == gc.checkpoints[2].signature

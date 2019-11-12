@@ -224,6 +224,12 @@ void
 wal_commit_checkpoint(struct wal_checkpoint *checkpoint);
 
 /**
+ * Prevent wal from collecting logs after the given vclock.
+ */
+void
+wal_set_gc_first_vclock(const struct vclock *vclock);
+
+/**
  * Set the WAL size threshold exceeding which will trigger
  * checkpointing in TX.
  */
@@ -231,11 +237,16 @@ void
 wal_set_checkpoint_threshold(int64_t threshold);
 
 /**
- * Remove WAL files that are not needed by consumers reading
- * rows at @vclock or newer.
+ * Update a wal consumer vclock position.
  */
 void
-wal_collect_garbage(const struct vclock *vclock);
+wal_relay_status_update(uint32_t replica_id, const struct vclock *vclock);
+
+/**
+ * Unregister a wal consumer.
+ */
+void
+wal_relay_delete(uint32_t replica_id);
 
 void
 wal_init_vy_log();

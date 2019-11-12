@@ -399,6 +399,8 @@ lbox_info_gc_call(struct lua_State *L)
 	count = 0;
 	struct gc_checkpoint *checkpoint;
 	gc_foreach_checkpoint(checkpoint) {
+		if (checkpoint->is_join_readview)
+			continue;
 		lua_createtable(L, 0, 2);
 
 		lua_pushstring(L, "vclock");
@@ -417,33 +419,6 @@ lbox_info_gc_call(struct lua_State *L)
 			lua_pushstring(L, ref->name);
 			lua_rawseti(L, -2, ++ref_idx);
 		}
-		lua_settable(L, -3);
-
-		lua_rawseti(L, -2, ++count);
-	}
-	lua_settable(L, -3);
-
-	lua_pushstring(L, "consumers");
-	lua_newtable(L);
-
-	struct gc_consumer_iterator consumers;
-	gc_consumer_iterator_init(&consumers);
-
-	count = 0;
-	struct gc_consumer *consumer;
-	while ((consumer = gc_consumer_iterator_next(&consumers)) != NULL) {
-		lua_createtable(L, 0, 3);
-
-		lua_pushstring(L, "name");
-		lua_pushstring(L, consumer->name);
-		lua_settable(L, -3);
-
-		lua_pushstring(L, "vclock");
-		lbox_pushvclock(L, &consumer->vclock);
-		lua_settable(L, -3);
-
-		lua_pushstring(L, "signature");
-		luaL_pushint64(L, vclock_sum(&consumer->vclock));
 		lua_settable(L, -3);
 
 		lua_rawseti(L, -2, ++count);
