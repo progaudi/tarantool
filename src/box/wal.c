@@ -44,6 +44,7 @@
 #include "coio_task.h"
 #include "replication.h"
 #include "mclock.h"
+#include "xrow_buf.h"
 
 enum {
 	/**
@@ -174,6 +175,14 @@ struct wal_writer
 	 * collecting. Ignored in case of no space error.
 	 */
 	struct vclock gc_first_vclock;
+	/**
+	 * In-memory WAl write buffer used to encode transaction rows and
+	 * write them to an xlog file. An in-memory buffer allows us to
+	 * preserve xrows after transaction processing was finished.
+	 * This buffer will be used by replication to fetch xrows from memory
+	 * without xlog files access.
+	 */
+	struct xrow_buf xrow_buf;
 };
 
 struct wal_msg {
@@ -1040,6 +1049,7 @@ wal_assign_lsn(struct vclock *vclock_diff, struct vclock *base,
 	int64_t tsn = 0;
 	/** Assign LSN to all local rows. */
 	for ( ; row < end; row++) {
+		(*row)->tm = ev_now(loop());
 		if ((*row)->replica_id == 0) {
 			(*row)->lsn = vclock_inc(vclock_diff, instance_id) +
 				      vclock_get(base, instance_id);
@@ -1068,6 +1078,35 @@ wal_assign_lsn(struct vclock *vclock_diff, struct vclock *base,
  * bytes or -1 in case of error.
  */
 static ssize_t
+wal_encode_write_entry(struct wal_writer *writer, struct journal_entry *entry)
+{
+	struct errinj *inj = errinj(ERRINJ_WAL_BREAK_LSN, ERRINJ_INT);
+	if (inj != NULL) {
+		for (struct xrow_header **row = entry->rows;
+		     row < entry->rows + entry->n_rows; ++row) {
+			if (inj->iparam == (*row)->lsn) {
+				(*row)->lsn = inj->iparam - 1;
+				say_warn("injected broken lsn: %lld",
+					 (long long) (*row)->lsn);
+				break;
+			}
+		}
+	}
+
+	struct iovec *iov;
+	int iov_cnt = xrow_buf_write(&writer->xrow_buf, entry->rows,
+				     entry->rows + entry->n_rows, &iov);
+	if (iov_cnt < 0)
+		return -1;
+	xlog_tx_begin(&writer->current_wal);
+	ssize_t rc = xlog_write_iov(&writer->current_wal, iov, iov_cnt,
+				    entry->n_rows);
+	if (rc < 0)
+		return rc;
+	return xlog_tx_commit(&writer->current_wal);
+}
+
+static ssize_t
 wal_write_xlog_batch(struct wal_writer *writer, struct stailq *input,
 		     struct stailq *output, struct vclock *vclock_diff)
 {
@@ -1082,7 +1121,7 @@ wal_write_xlog_batch(struct wal_writer *writer, struct stailq *input,
 			       entry->rows, entry->rows + entry->n_rows);
 		entry->res = vclock_sum(vclock_diff) +
 			     vclock_sum(&writer->vclock);
-		rc = xlog_write_entry(l, entry);
+		rc = wal_encode_write_entry(writer, entry);
 	} while (rc == 0 && !stailq_empty(input));
 	/* If log was not flushed then flush it explicitly. */
 	if (rc == 0)
@@ -1155,9 +1194,12 @@ wal_write_to_disk(struct cmsg *msg)
 	struct stailq output;
 	stailq_create(&output);
 	while (!stailq_empty(&input)) {
+		/* Start a wal memory buffer transaction. */
+		xrow_buf_tx_begin(&writer->xrow_buf, &writer->vclock);
 		ssize_t rc = wal_write_xlog_batch(writer, &input, &output,
 						  &vclock_diff);
 		if (rc < 0) {
+			xrow_buf_tx_rollback(&writer->xrow_buf);
 			/*
 			 * Put processed entries and tail of write
 			 * queue to a rollback list.
@@ -1165,6 +1207,7 @@ wal_write_to_disk(struct cmsg *msg)
 			stailq_concat(&wal_msg->rollback, &output);
 			stailq_concat(&wal_msg->rollback, &input);
 		} else {
+			xrow_buf_tx_commit(&writer->xrow_buf);
 			/*
 			 * Schedule processed entries to commit
 			 * and update the wal vclock.
@@ -1254,6 +1297,11 @@ wal_writer_f(va_list ap)
 {
 	(void) ap;
 	struct wal_writer *writer = &wal_writer_singleton;
+	/*
+	 * Initialize writer memory buffer here because it
+	 * should be done in the wal thread.
+	 */
+	xrow_buf_create(&writer->xrow_buf);
 
 	/** Initialize eio in this thread */
 	coio_enable();
@@ -1300,6 +1348,7 @@ wal_writer_f(va_list ap)
 		xlog_close(&vy_log_writer.xlog, false);
 
 	cpipe_destroy(&writer->tx_prio_pipe);
+	xrow_buf_destroy(&writer->xrow_buf);
 	return 0;
 }
 
