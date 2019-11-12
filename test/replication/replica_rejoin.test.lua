@@ -70,6 +70,7 @@ box.space.test:replace{1, 2, 3} -- bumps LSN on the replica
 test_run:cmd("switch default")
 test_run:cmd("stop server replica")
 test_run:cmd("restart server default")
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", true)
 checkpoint_count = box.cfg.checkpoint_count
 box.cfg{checkpoint_count = 1}
 for i = 1, 3 do box.space.test:delete{i * 10} end
@@ -135,6 +136,7 @@ box.space.test:replace{2}
 
 -- Cleanup.
 test_run:cmd("switch default")
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", false)
 box.cfg{replication = ''}
 test_run:cmd("stop server replica")
 test_run:cmd("cleanup server replica")

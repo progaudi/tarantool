@@ -1559,7 +1559,6 @@ box_process_join(struct ev_io *io, struct xrow_header *header)
 	if (coio_write_xrow(io, &row) < 0)
 		diag_raise();
 	replica = replica_by_uuid(&instance_uuid);
-	wal_relay_status_update(replica->id, &stop_vclock);
 }
 
 void

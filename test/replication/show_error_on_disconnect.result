@@ -20,6 +20,10 @@ test_run:cmd("switch master_quorum1")
 ---
 - true
 ...
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", true)
+---
+- ok
+...
 repl = box.cfg.replication
 ---
 ...
@@ -29,6 +33,10 @@ box.cfg{replication = ""}
 test_run:cmd("switch master_quorum2")
 ---
 - true
+...
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", true)
+---
+- ok
 ...
 box.space.test:insert{1}
 ---

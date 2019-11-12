@@ -36,6 +36,7 @@
 #include "cbus.h"
 #include "journal.h"
 #include "vclock.h"
+#include "xstream.h"
 
 struct fiber;
 struct wal_writer;
@@ -242,12 +243,6 @@ void
 wal_set_checkpoint_threshold(int64_t threshold);
 
 /**
- * Update a wal consumer vclock position.
- */
-void
-wal_relay_status_update(uint32_t replica_id, const struct vclock *vclock);
-
-/**
  * Unregister a wal consumer.
  */
 void
@@ -267,6 +262,87 @@ wal_write_vy_log(struct journal_entry *req);
  */
 void
 wal_rotate_vy_log();
+
+struct replica;
+struct wal_relay;
+
+#define WAL_RELAY_FILTER_ERR		-1
+#define WAL_RELAY_FILTER_PASS		0
+#define WAL_RELAY_FILTER_ROW		1
+#define WAL_RELAY_FILTER_SKIP		2
+
+typedef ssize_t (*wal_relay_filter_cb)(struct wal_relay *wal_relay,
+				       struct xrow_header **row);
+
+/**
+ * Wal relay maintains wal memory tracking and allows
+ * to retrieve logged xrows direct from the wal memory.
+ */
+struct wal_relay {
+	struct cmsg base;
+	/** Current wal reay position. */
+	struct vclock vclock;
+	/** Vclock to stop relaying. */
+	struct vclock stop_vclock;
+	/** Replica socket handle. */
+	int fd;
+	/**
+	 * Filter function callback points which row should
+	 * be passed to replica, replaced by NOP or other row
+	 * or skiiped out.
+	 */
+	wal_relay_filter_cb on_filter;
+	/**
+	 * Relay working fiber preserved in order to cancel
+	 * when relaying is canceled.
+	 */
+	struct fiber *fiber;
+	/** Message to cancel relaying fiber. */
+	struct cmsg cancel_msg;
+	/** Fiber condition is signalled relaying is stopped. */
+	struct fiber_cond done_cond;
+	/** Turns to true when relaying was stopped. */
+	bool done;
+	/** Return code. */
+	int rc;
+	/** Diagnostic area. */
+	struct diag diag;
+	/** Replica which consumes relayed logs. */
+	struct replica *replica;
+	/** Vclock reported by replica. */
+	struct vclock replica_vclock;
+	/** Last transmission time. */
+	double last_row_time;
+};
+
+/**
+ * A function to start fetching rows direct from wal memory buffer.
+ * This function initiates connection with a wal and starts
+ * a fiber which handles wal memory cursor and yields until
+ * the fiber exited because of the cursor was outdated or a
+ * row sending error. When a fiber called this function was
+ * cancelled then special cancel message will be send in order
+ * to stop relaying fiber.
+ *
+ * @param wal_relay a wal relay structure to put all temporay
+ * values in
+ * @param vclock a vclock to start relaying from
+ * @param on_filter a callback to patch relaying rows
+ * @param fd replica socket handler
+ * @param replica client replica which consumer logs
+ * @retval 0 relaying was finished because of cursor is our of date
+ * @retval -1 relaying was finished because of an error.
+ */
+int
+wal_relay(struct wal_relay *wal_relay, const struct vclock *vclock,
+	  const struct vclock *stop_vclock,  wal_relay_filter_cb on_filter,
+	  int fd, struct replica *replica);
+
+int
+wal_relay_vclock(const struct wal_relay *wal_relay, struct vclock *vclock);
+
+double
+wal_relay_last_row_time(const struct wal_relay *wal_relay);
 
 #if defined(__cplusplus)
 } /* extern "C" */

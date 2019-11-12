@@ -293,9 +293,13 @@ uuid = '0d5bd431-7f3e-4695-a5c2-82de0a9cbc95'
 header = { IPROTO_CODE: REQUEST_TYPE_JOIN, IPROTO_SYNC: 2334 }
 body = { IPROTO_SERVER_UUID: uuid }
 resp = test_request(header, body)
+# In memory replication would not support the
+# sync field while final join or subscribe for
+# replied rows because it requires
+# to reencode of each row stored in a memory buffer.
 if resp['header'][IPROTO_SYNC] == 2334:
     i = 1
-    while i < 3:
+    while i < 2:
         resp = receive_response()
         if resp['header'][IPROTO_SYNC] != 2334:
             print 'Bad sync on response with number ', i
@@ -306,6 +310,9 @@ if resp['header'][IPROTO_SYNC] == 2334:
         print 'Sync ok'
 else:
     print 'Bad first sync'
+# read until the third OK
+while receive_response()['header'][IPROTO_CODE] != REQUEST_TYPE_OK:
+    pass
 
 #
 # Try incorrect JOIN. SYNC must be also returned.

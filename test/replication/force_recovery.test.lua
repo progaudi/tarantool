@@ -8,6 +8,7 @@ _ = box.schema.space.create('test')
 _ = box.space.test:create_index('primary')
 box.schema.user.grant('guest', 'replication')
 
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", true)
 -- Deploy a replica.
 test_run:cmd("create server test with rpl_master=default, script='replication/replica.lua'")
 test_run:cmd("start server test")
@@ -33,6 +34,7 @@ box.space.test:select()
 box.info.replication[1].upstream.status == 'stopped' or box.info
 test_run:cmd("switch default")
 box.cfg{force_recovery = false}
+box.error.injection.set("ERRINJ_WAL_MEM_IGNORE", false)
 
 -- Cleanup.
 test_run:cmd("stop server test")
