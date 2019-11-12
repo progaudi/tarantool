@@ -154,8 +154,7 @@ xrow_buf_tx_commit(struct xrow_buf *xrow_buf);
  */
 int
 xrow_buf_write(struct xrow_buf *xrow_buf, struct xrow_header **begin,
-	       struct xrow_header **end,
-	       struct iovec **iovec);
+	       struct xrow_header **end, struct iovec **iovec);
 
 /**
  * Xrow buffer cursor used to search a position in a buffer
