@@ -35,10 +35,5 @@
 int
 xstream_write(struct xstream *stream, struct xrow_header *row)
 {
-	try {
-		stream->write(stream, row);
-	} catch (Exception *e) {
-		return -1;
-	}
-	return 0;
+	return stream->write(stream, row);
 }

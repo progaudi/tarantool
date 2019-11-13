@@ -165,11 +165,11 @@ relay_last_row_time(const struct relay *relay)
 	return relay->last_row_time;
 }
 
-static void
+static int
 relay_send(struct relay *relay, struct xrow_header *packet);
-static void
+static int
 relay_send_initial_join_row(struct xstream *stream, struct xrow_header *row);
-static void
+static int
 relay_send_row(struct xstream *stream, struct xrow_header *row);
 
 struct relay *
@@ -192,7 +192,7 @@ relay_new(struct replica *replica)
 
 static void
 relay_start(struct relay *relay, int fd, uint64_t sync,
-	     void (*stream_write)(struct xstream *, struct xrow_header *))
+	     int (*stream_write)(struct xstream *, struct xrow_header *))
 {
 	xstream_create(&relay->stream, stream_write);
 	/*
@@ -711,7 +711,7 @@ relay_subscribe(struct replica *replica, int fd, uint64_t sync,
 		diag_raise();
 }
 
-static void
+static int
 relay_send(struct relay *relay, struct xrow_header *packet)
 {
 	ERROR_INJECT_YIELD(ERRINJ_RELAY_SEND_DELAY);
@@ -719,15 +719,16 @@ relay_send(struct relay *relay, struct xrow_header *packet)
 	packet->sync = relay->sync;
 	relay->last_row_time = ev_monotonic_now(loop());
 	if (coio_write_xrow(&relay->io, packet) < 0)
-		diag_raise();
+		return -1;
 	fiber_gc();
 
 	struct errinj *inj = errinj(ERRINJ_RELAY_TIMEOUT, ERRINJ_DOUBLE);
 	if (inj != NULL && inj->dparam > 0)
 		fiber_sleep(inj->dparam);
+	return 0;
 }
 
-static void
+static int
 relay_send_initial_join_row(struct xstream *stream, struct xrow_header *row)
 {
 	struct relay *relay = container_of(stream, struct relay, stream);
@@ -736,11 +737,12 @@ relay_send_initial_join_row(struct xstream *stream, struct xrow_header *row)
 	 * vclock while sending a snapshot.
 	 */
 	if (row->group_id != GROUP_LOCAL)
-		relay_send(relay, row);
+		return relay_send(relay, row);
+	return 0;
 }
 
 /** Send a single row to the client. */
-static void
+static int
 relay_send_row(struct xstream *stream, struct xrow_header *packet)
 {
 	struct relay *relay = container_of(stream, struct relay, stream);
@@ -778,6 +780,7 @@ relay_send_row(struct xstream *stream, struct xrow_header *packet)
 			say_warn("injected broken lsn: %lld",
 				 (long long) packet->lsn);
 		}
-		relay_send(relay, packet);
+		return relay_send(relay, packet);
 	}
+	return 0;
 }

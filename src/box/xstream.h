@@ -41,7 +41,7 @@ extern "C" {
 struct xrow_header;
 struct xstream;
 
-typedef void (*xstream_write_f)(struct xstream *, struct xrow_header *);
+typedef int (*xstream_write_f)(struct xstream *, struct xrow_header *);
 
 struct xstream {
 	xstream_write_f write;
