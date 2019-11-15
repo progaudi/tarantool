@@ -895,7 +895,7 @@ vy_tx_begin_statement(struct vy_tx *tx, struct space *space, void **savepoint)
 	}
 	assert(tx->state == VINYL_TX_READY);
 	tx->last_stmt_space = space;
-	if (stailq_empty(&tx->log))
+	if (stailq_empty(&tx->log) && rlist_empty(&tx->in_writers))
 		rlist_add_entry(&tx->xm->writers, tx, in_writers);
 	*savepoint = stailq_last(&tx->log);
 	return 0;
