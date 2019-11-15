@@ -286,6 +286,8 @@ struct wal_stream {
 	struct xstream base;
 	/** How many rows have been recovered so far. */
 	size_t rows;
+	/** Current transaction.*/
+	struct txn *txn;
 };
 
 /**
@@ -321,7 +323,8 @@ recovery_journal_write(struct journal *base,
 }
 
 static inline void
-recovery_journal_create(struct recovery_journal *journal, const struct vclock *v)
+recovery_journal_create(struct recovery_journal *journal,
+			const struct vclock *v)
 {
 	journal_create(&journal->base, recovery_journal_write, NULL);
 	vclock_copy(&journal->vclock, v);
@@ -330,33 +333,44 @@ recovery_journal_create(struct recovery_journal *journal, const struct vclock *v
 static int
 apply_wal_row(struct xstream *stream, struct xrow_header *row)
 {
-	struct request request;
-	xrow_decode_dml_xc(row, &request, dml_request_key_map(row->type));
-	if (request.type != IPROTO_NOP) {
-		struct space *space = space_cache_find_xc(request.space_id);
-		if (box_process_rw(&request, space, NULL) != 0) {
-			say_error("error applying row: %s", request_str(&request));
-			return -1;
-		}
-	} else {
-		struct txn *txn = txn_begin();
-		if (txn == NULL || txn_begin_stmt(txn, NULL) != 0 ||
-		    txn_commit_stmt(txn, &request) != 0) {
-			txn_rollback(txn);
-			return -1;
-		}
-		if (txn_commit(txn) != 0)
+	struct wal_stream *wal_stream =
+		container_of(stream, struct wal_stream, base);
+	if (wal_stream->txn == NULL) {
+		wal_stream->txn = txn_begin();
+		if (wal_stream->txn == NULL)
 			return -1;
 	}
-	struct wal_stream *xstream =
-		container_of(stream, struct wal_stream, base);
+	struct request request;
+	xrow_decode_dml_xc(row, &request, dml_request_key_map(row->type));
+	int rc = 0;
+	if (request.type != IPROTO_NOP) {
+		struct space *space = space_cache_find_xc(request.space_id);
+		rc = box_process_rw(&request, space, NULL);
+		if (rc != 0)
+			say_error("error applying row: %s", request_str(&request));
+	} else {
+		struct txn *txn = in_txn();
+		rc = txn_begin_stmt(txn, NULL);
+		if (rc == 0)
+			rc = txn_commit_stmt(txn, &request);
+	}
+	if (row->is_commit) {
+		if (txn_commit(wal_stream->txn) != 0) {
+			wal_stream->txn = NULL;
+			return -1;
+		}
+		wal_stream->txn = NULL;
+	}
 	/**
 	 * Yield once in a while, but not too often,
 	 * mostly to allow signal handling to take place.
 	 */
-	if (++xstream->rows % WAL_ROWS_PER_YIELD == 0)
+	if (++(wal_stream->rows) > WAL_ROWS_PER_YIELD &&
+	    wal_stream->txn == NULL) {
+		wal_stream->rows -= WAL_ROWS_PER_YIELD;
 		fiber_sleep(0);
-	return 0;
+	}
+	return rc;
 }
 
 static void
@@ -364,6 +378,21 @@ wal_stream_create(struct wal_stream *ctx)
 {
 	xstream_create(&ctx->base, apply_wal_row);
 	ctx->rows = 0;
+	ctx->txn = NULL;
+}
+
+static int
+wal_stream_destroy(struct wal_stream *ctx)
+{
+	if (ctx->txn != NULL) {
+		/* The last processed row does not have a commit flag set. */
+		txn_rollback(ctx->txn);
+		ctx->txn = NULL;
+		diag_set(ClientError, ER_UNSUPPORTED,
+			 "recovery", "not finished transactions");
+		return -1;
+	}
+	return 0;
 }
 
 /* {{{ configuration bindings */
@@ -1917,6 +1946,9 @@ local_recovery(const struct tt_uuid *instance_uuid,
 
 	struct wal_stream wal_stream;
 	wal_stream_create(&wal_stream);
+	auto wal_stream_guard = make_scoped_guard([&]{
+		wal_stream_destroy(&wal_stream);
+	});
 
 	struct recovery *recovery;
 	recovery = recovery_new(cfg_gets("wal_dir"),
@@ -1925,13 +1957,7 @@ local_recovery(const struct tt_uuid *instance_uuid,
 	if (recovery == NULL)
 		diag_raise();
 
-	/*
-	 * Make sure we report the actual recovery position
-	 * in box.info while local recovery is in progress.
-	 */
-	box_vclock = &recovery->vclock;
 	auto guard = make_scoped_guard([&]{
-		box_vclock = &replicaset.vclock;
 		recovery_stop_local(recovery);
 		recovery_delete(recovery);
 	});
@@ -1981,12 +2007,12 @@ local_recovery(const struct tt_uuid *instance_uuid,
 	 */
 	memtx_engine_recover_snapshot_xc(memtx, checkpoint_vclock);
 
-	vclock_copy(&replicaset.vclock, checkpoint_vclock);
 	struct recovery_journal journal;
 	recovery_journal_create(&journal, &recovery->vclock);
 	journal_set(&journal.base);
 
 	engine_begin_final_recovery_xc();
+
 	if (recover_remaining_wals(recovery, &wal_stream.base, NULL, false) != 0)
 		diag_raise();
 	engine_end_recovery_xc();
@@ -2015,7 +2041,9 @@ local_recovery(const struct tt_uuid *instance_uuid,
 		box_sync_replication(false);
 	}
 	recovery_finalize(recovery);
-
+	wal_stream_guard.is_active = false;
+	if (wal_stream_destroy(&wal_stream))
+		diag_raise();
 	/*
 	 * We must enable WAL before finalizing engine recovery,
 	 * because an engine may start writing to WAL right after

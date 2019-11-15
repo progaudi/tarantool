@@ -67,8 +67,11 @@ test_run:cmd("setopt delimiter ';'")
 _ = fiber.create(function()
     test_run:wait_cond(function() return box.info.replication[2] ~= nil end)
     lsn = box.info.vclock[1]
-    box.error.injection.set("ERRINJ_RELAY_BREAK_LSN", lsn + 1)
+    box.error.injection.set("ERRINJ_RELAY_BREAK_LSN", lsn + 2)
+    box.begin()
     box.space.test:auto_increment{'v1'}
+    box.space.test:auto_increment{'v1'}
+    box.commit()
     box.error.injection.set("ERRINJ_REPLICA_JOIN_DELAY", false)
 end);
 test_run:cmd("setopt delimiter ''");
@@ -78,7 +81,7 @@ test_run:cmd('start server replica with crash_expected=True')
 box.error.injection.set("ERRINJ_RELAY_BREAK_LSN", -1)
 
 -- Check that log contains the mention of broken LSN and the request printout
-grep_broken_lsn(fio.pathjoin(fio.cwd(), 'replica.log'), lsn)
+grep_broken_lsn(fio.pathjoin(fio.cwd(), 'replica.log'), lsn + 1)
 
 test_run:cmd('cleanup server replica')
 test_run:cmd('delete server replica')

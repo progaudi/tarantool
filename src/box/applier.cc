@@ -268,23 +268,6 @@ apply_row(struct xrow_header *row)
 	return 0;
 }
 
-static int
-apply_final_join_row(struct xrow_header *row)
-{
-	struct txn *txn = txn_begin();
-	if (txn == NULL)
-		return -1;
-	if (apply_row(row) != 0) {
-		txn_rollback(txn);
-		fiber_gc();
-		return -1;
-	}
-	if (txn_commit(txn) != 0)
-		return -1;
-	fiber_gc();
-	return 0;
-}
-
 /**
  * Connect to a remote host and authenticate the client.
  */
@@ -392,6 +375,22 @@ done:
 }
 
 /**
+ * A helper struct to link xrow objects in a list.
+ */
+struct applier_tx_row {
+	/* Next transaction row. */
+	struct stailq_entry next;
+	/* xrow_header struct for the current transaction row. */
+	struct xrow_header row;
+};
+
+static void
+applier_read_tx(struct applier *applier, struct stailq *rows);
+
+static int
+applier_apply_tx(struct stailq *rows);
+
+/**
  * Execute and process JOIN request (bootstrap the instance).
  */
 static void
@@ -478,43 +477,35 @@ applier_join(struct applier *applier)
 	 * Receive final data.
 	 */
 	while (true) {
-		if (coio_read_xrow(coio, ibuf, &row) < 0)
-			diag_raise();
-		applier->last_row_time = ev_monotonic_now(loop());
-		if (iproto_type_is_dml(row.type)) {
-			vclock_follow_xrow(&replicaset.vclock, &row);
-			if (apply_final_join_row(&row) != 0)
-				diag_raise();
-			if (++row_count % 100000 == 0)
-				say_info("%.1fM rows received", row_count / 1e6);
-		} else if (row.type == IPROTO_OK) {
-			/*
-			 * Current vclock. This is not used now,
-			 * ignore.
-			 */
+		struct stailq rows;
+		applier_read_tx(applier, &rows);
+		struct xrow_header *first_row =
+			&(stailq_first_entry(&rows, struct applier_tx_row,
+					    next)->row);
+		if (first_row->type == IPROTO_OK) {
+			if (applier->version_id < version_id(1, 7, 0)) {
+				/*
+				 * This is the start vclock if the
+				 * server is 1.6. Since we have
+				 * not initialized replication
+				 * vclock yet, do it now. In 1.7+
+				 * this vclock is not used.
+				 */
+				xrow_decode_vclock_xc(first_row, &replicaset.vclock);
+			}
 			break; /* end of stream */
-		} else if (iproto_type_is_error(row.type)) {
-			xrow_decode_error_xc(&row);  /* rethrow error */
-		} else {
-			tnt_raise(ClientError, ER_UNKNOWN_REQUEST_TYPE,
-				  (uint32_t) row.type);
 		}
+		if (applier_apply_tx(&rows) != 0)
+			diag_raise();
+		if (ibuf_used(ibuf) == 0)
+			ibuf_reset(ibuf);
+		fiber_gc();
 	}
 	say_info("final data received");
 
 	applier_set_state(applier, APPLIER_JOINED);
 	applier_set_state(applier, APPLIER_READY);
 }
-
-/**
- * A helper struct to link xrow objects in a list.
- */
-struct applier_tx_row {
-	/* Next transaction row. */
-	struct stailq_entry next;
-	/* xrow_header struct for the current transaction row. */
-	struct xrow_header row;
-};
 
 static struct applier_tx_row *
 applier_read_tx_row(struct applier *applier)
@@ -532,6 +523,9 @@ applier_read_tx_row(struct applier *applier)
 	struct xrow_header *row = &tx_row->row;
 
 	double timeout = replication_disconnect_timeout();
+	/* We check timeout only in case of subscribe. */
+	if (applier->state == APPLIER_FINAL_JOIN)
+		timeout = TIMEOUT_INFINITY;
 	/*
 	 * Tarantool < 1.7.7 does not send periodic heartbeat
 	 * messages so we can't assume that if we haven't heard
@@ -567,6 +561,12 @@ applier_read_tx(struct applier *applier, struct stailq *rows)
 	do {
 		struct applier_tx_row *tx_row = applier_read_tx_row(applier);
 		struct xrow_header *row = &tx_row->row;
+
+		if (row->type == IPROTO_OK) {
+			stailq_add_tail(rows, &tx_row->next);
+			assert(tx_row->row.is_commit);
+			break;
+		}
 
 		if (iproto_type_is_error(row->type))
 			xrow_decode_error_xc(row);
