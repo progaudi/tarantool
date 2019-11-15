@@ -937,6 +937,7 @@ local function rocks()
     local util = require("luarocks.util")
     local command_line = require("luarocks.cmd")
     local options = keyword_arguments
+
     local key = nil
     if options["only-server"] ~= nil then
         key = find_arg("only%-server")
@@ -944,6 +945,10 @@ local function rocks()
         key = find_arg("server")
     end
     table.insert(positional_arguments, key)
+
+    if positional_arguments[1] == "search" and  find_arg("all") then
+        table.insert(positional_arguments, "--all")
+    end
 
     -- Tweak help messages
     util.see_help = function(command, program)
@@ -1400,6 +1405,7 @@ local function populate_arguments()
         { 'only-server', 'string'  },
         { 'server',      'string'  },
         { 'language',    'string'  },
+        { 'all',         'boolean' },
     })
 
     local cmd_name
