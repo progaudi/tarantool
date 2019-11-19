@@ -29,12 +29,19 @@ if os.access(wal, os.F_OK):
     print ".xlog exists"
     os.rename(wal, wal_old)
 
+# Write wal#1-1
+server.start()
+server.admin("box.space.test:insert{1, 'nop'}")
+server.admin("box.space.test:delete{1}")
+server.stop()
+
 # Write wal#2
 server.start()
 server.admin("box.space.test:insert{1, 'third tuple'}")
 server.admin("box.space.test:insert{2, 'fourth tuple'}")
 server.stop()
 
+os.unlink(wal)
 # Restore wal#1
 if not os.access(wal, os.F_OK):
     print ".xlog does not exist"

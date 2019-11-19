@@ -5,6 +5,10 @@ box.info.lsn
 box.space._schema:delete('dummy')
 ---
 ...
+box.snapshot()
+---
+- ok
+...
 box.info.lsn
 ---
 - 123456789123
