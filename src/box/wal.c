@@ -907,29 +907,26 @@ wal_writer_begin_rollback(struct wal_writer *writer)
 
 /*
  * Assign lsn and replica identifier for local writes and track
- * row into vclock_diff.
+ * row into vclock.
  */
 static void
-wal_assign_lsn(struct vclock *vclock_diff, struct vclock *base,
+wal_assign_lsn(struct vclock *vclock, struct vclock *base,
 	       struct xrow_header **row,
 	       struct xrow_header **end)
 {
 	int64_t tsn = 0;
+	vclock_copy(vclock, base);
 	/** Assign LSN to all local rows. */
 	for ( ; row < end; row++) {
 		if ((*row)->replica_id == 0) {
-			(*row)->lsn = vclock_inc(vclock_diff, instance_id) +
-				      vclock_get(base, instance_id);
+			(*row)->lsn = vclock_inc(vclock, instance_id);
 			(*row)->replica_id = instance_id;
 			/* Use lsn of the first local row as transaction id. */
 			tsn = tsn == 0 ? (*row)->lsn : tsn;
 			(*row)->tsn = tsn;
 			(*row)->is_commit = row == end - 1;
-		} else {
-			vclock_follow(vclock_diff, (*row)->replica_id,
-				      (*row)->lsn - vclock_get(base,
-							       (*row)->replica_id));
-		}
+		} else
+			vclock_follow(vclock, (*row)->replica_id, (*row)->lsn);
 	}
 }
 
@@ -954,10 +951,8 @@ wal_write_xlog_batch(struct wal_writer *writer, struct stailq *input,
 			stailq_shift_entry(input, struct journal_entry, fifo);
 		stailq_add_tail(output, &entry->fifo);
 
-		wal_assign_lsn(&vclock_diff, prev_vclock,
+		wal_assign_lsn(&entry->vclock, prev_vclock,
 			       entry->rows, entry->rows + entry->n_rows);
-		vclock_copy(&entry->vclock, prev_vclock);
-		vclock_merge(&entry->vclock, &vclock_diff);
 		entry->res = vclock_sum(&entry->vclock);
 		prev_vclock = &entry->vclock;
 		rc = xlog_write_entry(l, entry);
@@ -1215,12 +1210,9 @@ wal_write_in_wal_mode_none(struct journal *journal,
 			   struct journal_entry *entry)
 {
 	struct wal_writer *writer = (struct wal_writer *) journal;
-	struct vclock vclock_diff;
-	vclock_create(&vclock_diff);
-	wal_assign_lsn(&vclock_diff, &writer->vclock, entry->rows,
+	wal_assign_lsn(&entry->vclock, &writer->vclock, entry->rows,
 		       entry->rows + entry->n_rows);
-	vclock_merge(&writer->vclock, &vclock_diff);
-	vclock_copy(&entry->vclock, &writer->vclock);
+	vclock_copy(&writer->vclock, &entry->vclock);
 	entry->approx_len = 0;
 	vclock_copy(&replicaset.vclock, &writer->vclock);
 	entry->res = vclock_sum(&writer->vclock);
