@@ -1041,9 +1041,12 @@ local function tcp_connect(host, port, timeout)
     end
     local timeout = timeout or TIMEOUT_INFINITY
     local stop = fiber.clock() + timeout
-    local dns = getaddrinfo(host, port, timeout, { type = 'SOCK_STREAM',
+    local dns, err = getaddrinfo(host, port, timeout, { type = 'SOCK_STREAM',
         protocol = 'tcp' })
-    if dns == nil or #dns == 0 then
+    if dns == nil then
+        return nil, err
+    end
+    if #dns == 0 then
         boxerrno(boxerrno.EINVAL)
         return nil
     end
@@ -1360,8 +1363,12 @@ local function lsocket_tcp_connect(self, host, port)
     -- This function is broken by design
     local ga_opts = { family = 'AF_INET', type = 'SOCK_STREAM' }
     local timeout = deadline - fiber.clock()
-    local dns = getaddrinfo(host, port, timeout, ga_opts)
-    if dns == nil or #dns == 0 then
+    local dns, err = getaddrinfo(host, port, timeout, ga_opts)
+    if dns == nil then
+        self._errno = boxerrno.EINVAL
+        return nil, err
+    end
+    if #dns == 0 then
         self._errno = boxerrno.EINVAL
         return nil, socket_error(self)
     end
@@ -1547,9 +1554,12 @@ local function lsocket_connect(host, port)
     if host == nil or port == nil then
         error("Usage: luasocket.connect(host, port)")
     end
-    local s = tcp_connect(host, port)
+    local s, err = tcp_connect(host, port)
     if not s then
-        return nil, boxerrno.strerror()
+        if not err then
+            return nil, boxerrno.strerror()
+        end
+        return nil, err
     end
     setmetatable(s, lsocket_tcp_client_mt)
     return s

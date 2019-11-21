@@ -941,10 +941,20 @@ sc:close()
 - true
 ...
 -- tcp_connect
--- test timeout
-socket.tcp_connect('127.0.0.1', 80, 0.00000000001)
+-- Test timeout. In this test, tcp_connect can return the second
+-- output value from internal.getaddrinfo (usually on Mac OS, but
+-- theoretically it can happen on Linux too). Sometimes
+-- getaddrinfo() is timed out, sometimes connect. On Linux however
+-- getaddrinfo is fast enough to never give timeout error in
+-- the case. So, there are two sources of timeout errors that are
+-- reported differently. This difference has appeared after
+-- gh-4138 patch.
+s, err = socket.tcp_connect('127.0.0.1', 80, 0.00000000001)
 ---
-- null
+...
+s == nil
+---
+- true
 ...
 -- AF_INET
 s = socket('AF_INET', 'SOCK_STREAM', 'tcp')
@@ -1595,7 +1605,7 @@ fio.stat(path) == nil
 { socket.tcp_connect('abrakadabra#123') == nil, errno.strerror() }
 ---
 - - true
-  - Invalid argument
+  - Input/output error
 ...
 -- wrong options for getaddrinfo
 socket.getaddrinfo('host', 'port', { type = 'WRONG' }) == nil and errno() == errno.EINVAL
@@ -2903,6 +2913,51 @@ s:close()
 - 1
 ...
 srv:close()
+---
+- true
+...
+-- gh-4138 Check getaddrinfo() error from socket:connect() only.
+-- Error code and error message returned by getaddrinfo() depends
+-- on system's gai_strerror().
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+function check_err(err)
+    if err == 'getaddrinfo: nodename nor servname provided, or not known' or
+       err == 'getaddrinfo: Servname not supported for ai_socktype' or
+       err == 'getaddrinfo: Name or service not known' or
+       err == 'getaddrinfo: hostname nor servname provided, or not known' or
+       err == 'getaddrinfo: Temporary failure in name resolution' or
+       err == 'getaddrinfo: Name could not be resolved at this time' then
+        return true
+    end
+    return false
+end;
+---
+...
+test_run:cmd("setopt delimiter ''");
+---
+- true
+...
+s, err = socket.getaddrinfo('non_exists_hostname', 3301)
+---
+...
+check_err(err)
+---
+- true
+...
+s, err = socket.connect('non_exists_hostname', 3301)
+---
+...
+check_err(err)
+---
+- true
+...
+s, err = socket.tcp_connect('non_exists_hostname', 3301)
+---
+...
+check_err(err)
 ---
 - true
 ...

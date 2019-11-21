@@ -154,9 +154,12 @@ local function next_id(id) return band(id + 1, 0x7FFFFFFF) end
 local function establish_connection(host, port, timeout)
     local timeout = timeout or DEFAULT_CONNECT_TIMEOUT
     local begin = fiber.clock()
-    local s = socket.tcp_connect(host, port, timeout)
+    local s, err = socket.tcp_connect(host, port, timeout)
     if not s then
-        return nil, errno.strerror(errno())
+        if not err then
+            return nil, errno.strerror(errno())
+        end
+        return nil, err
     end
     local msg = s:read({chunk = IPROTO_GREETING_SIZE},
                         timeout - (fiber.clock() - begin))
