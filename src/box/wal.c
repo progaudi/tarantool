@@ -96,6 +96,7 @@ struct wal_writer
 	struct cpipe wal_pipe;
 	/** A memory pool for messages. */
 	struct mempool msg_pool;
+	struct journal_entry *last_scheduled_entry;
 	/* ----------------- wal ------------------- */
 	/** A setting from instance configuration - wal_max_size */
 	int64_t wal_max_size;
@@ -188,21 +189,21 @@ struct wal_writer
 	struct xrow_buf xrow_buf;
 	/** xrow buffer condition signaled when a buffer write was done. */
 	struct fiber_cond xrow_buf_cond;
+	/** Message pool allocates wal to tx messages. */
+	struct mempool schedule_pool;
 };
 
-struct wal_msg {
+struct wal_write_msg {
 	struct cmsg base;
 	/** Approximate size of this request when encoded. */
 	size_t approx_len;
 	/** Input queue, on output contains all committed requests. */
 	struct stailq commit;
-	/**
-	 * In case of rollback, contains the requests which must
-	 * be rolled back.
-	 */
-	struct stailq rollback;
-	/** vclock after the batch processed. */
-	struct vclock vclock;
+};
+
+struct wal_schedule_msg {
+	struct cmsg base;
+	struct stailq queue;
 };
 
 /**
@@ -226,27 +227,45 @@ static void
 wal_write_to_disk(struct cmsg *msg);
 
 static void
-tx_schedule_commit(struct cmsg *msg);
+tx_write_to_disk_done(struct cmsg *msg);
 
 static struct cmsg_hop wal_request_route[] = {
 	{wal_write_to_disk, &wal_writer_singleton.tx_prio_pipe},
-	{tx_schedule_commit, NULL},
+	{tx_write_to_disk_done, NULL},
 };
 
 static void
-wal_msg_create(struct wal_msg *batch)
+tx_schedule_commit(struct cmsg *msg);
+
+static void
+wal_schedule_msg_done(struct cmsg *msg);
+
+static struct cmsg_hop wal_schedule_commit_route[] = {
+	{tx_schedule_commit, &wal_writer_singleton.wal_pipe},
+	{wal_schedule_msg_done, NULL},
+};
+
+static void
+tx_schedule_rollback(struct cmsg *msg);
+
+static struct cmsg_hop wal_schedule_rollback_route[] = {
+	{tx_schedule_rollback, &wal_writer_singleton.wal_pipe},
+	{wal_schedule_msg_done, NULL},
+};
+
+
+static void
+wal_write_msg_create(struct wal_write_msg *batch)
 {
 	cmsg_init(&batch->base, wal_request_route);
 	batch->approx_len = 0;
 	stailq_create(&batch->commit);
-	stailq_create(&batch->rollback);
-	vclock_create(&batch->vclock);
 }
 
-static struct wal_msg *
-wal_msg(struct cmsg *msg)
+static struct wal_write_msg *
+wal_write_msg(struct cmsg *msg)
 {
-	return msg->route == wal_request_route ? (struct wal_msg *) msg : NULL;
+	return msg->route == wal_request_route ? (struct wal_write_msg *) msg : NULL;
 }
 
 /** Write a request to a log in a single transaction. */
@@ -299,30 +318,33 @@ tx_schedule_queue(struct stailq *queue)
  * the rollback queue.
  */
 static void
-tx_schedule_commit(struct cmsg *msg)
+tx_schedule_commit(struct cmsg *base)
 {
-	struct wal_writer *writer = &wal_writer_singleton;
-	struct wal_msg *batch = (struct wal_msg *) msg;
-	/*
-	 * Move the rollback list to the writer first, since
-	 * wal_msg memory disappears after the first
-	 * iteration of tx_schedule_queue loop.
-	 */
-	if (! stailq_empty(&batch->rollback)) {
-		/* Closes the input valve. */
-		stailq_concat(&writer->rollback, &batch->rollback);
-	}
+	struct wal_schedule_msg *batch =
+		container_of(base, struct wal_schedule_msg, base);
 	/* Update the tx vclock to the latest written by wal. */
-	vclock_copy(&replicaset.vclock, &batch->vclock);
-	tx_schedule_queue(&batch->commit);
-	mempool_free(&writer->msg_pool, container_of(msg, struct wal_msg, base));
+	struct journal_entry *entry =
+		stailq_last_entry(&batch->queue, struct journal_entry, fifo);
+	vclock_copy(&replicaset.vclock, &entry->vclock);
+	tx_schedule_queue(&batch->queue);
 }
 
 static void
-tx_schedule_rollback(struct cmsg *msg)
+tx_schedule_rollback(struct cmsg *base)
 {
-	(void) msg;
 	struct wal_writer *writer = &wal_writer_singleton;
+	struct wal_schedule_msg *batch =
+		container_of(base, struct wal_schedule_msg, base);
+	/*
+	 * Move the rollback list to the writer first until
+	 * the last scheduled entry does not arrive.
+	 */
+	stailq_concat(&writer->rollback, &batch->queue);
+	struct journal_entry *entry =
+		stailq_last_entry(&writer->rollback, struct journal_entry, fifo);
+	if (entry != writer->last_scheduled_entry)
+		return;
+
 	/*
 	 * Perform a cascading abort of all transactions which
 	 * depend on the transaction which failed to get written
@@ -334,11 +356,16 @@ tx_schedule_rollback(struct cmsg *msg)
 	/* Must not yield. */
 	tx_schedule_queue(&writer->rollback);
 	stailq_create(&writer->rollback);
-	if (msg != &writer->in_rollback)
-		mempool_free(&writer->msg_pool,
-			     container_of(msg, struct wal_msg, base));
 }
 
+static void
+wal_schedule_msg_done(struct cmsg *base)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	struct wal_schedule_msg *msg =
+		container_of(base, struct wal_schedule_msg, base);
+	mempool_free(&writer->schedule_pool, msg);
+}
 
 /**
  * This message is sent from WAL to TX when the WAL thread hits
@@ -438,7 +465,7 @@ wal_writer_create(struct wal_writer *writer, enum wal_mode wal_mode,
 	writer->on_checkpoint_threshold = on_checkpoint_threshold;
 
 	mempool_create(&writer->msg_pool, &cord()->slabc,
-		       sizeof(struct wal_msg));
+		       sizeof(struct wal_write_msg));
 
 	mclock_create(&writer->mclock);
 
@@ -991,16 +1018,6 @@ wal_writer_begin_rollback(struct wal_writer *writer)
 		 * list.
 		 */
 		{ wal_writer_clear_bus, &wal_writer_singleton.wal_pipe },
-		{ wal_writer_clear_bus, &wal_writer_singleton.tx_prio_pipe },
-		/*
-		 * Step 2: writer->rollback queue contains all
-		 * messages which need to be rolled back,
-		 * perform the rollback.
-		 */
-		{ tx_schedule_rollback, &wal_writer_singleton.wal_pipe },
-		/*
-		 * Step 3: re-open the WAL for writing.
-		 */
 		{ wal_writer_end_rollback, NULL }
 	};
 
@@ -1010,6 +1027,24 @@ wal_writer_begin_rollback(struct wal_writer *writer)
 	 */
 	cmsg_init(&writer->in_rollback, rollback_route);
 	cpipe_push(&writer->tx_prio_pipe, &writer->in_rollback);
+}
+
+static void
+wal_writer_rollback_queue(struct wal_writer *writer, struct stailq *queue)
+{
+	if (writer->in_rollback.route == NULL)
+		wal_writer_begin_rollback(writer);
+	struct wal_schedule_msg *msg =
+		(struct wal_schedule_msg *)mempool_alloc(&writer->schedule_pool);
+	if (msg == NULL)
+		panic("Could not allocate a rollback message");
+	stailq_create(&msg->queue);
+	stailq_concat(&msg->queue, queue);
+	struct journal_entry *entry;
+	stailq_foreach_entry(entry, &msg->queue, fifo)
+		entry->res = -1;
+	cmsg_init(&msg->base, wal_schedule_rollback_route);
+	cpipe_push(&writer->tx_prio_pipe, &msg->base);
 }
 
 /*
@@ -1106,31 +1141,22 @@ static void
 wal_write_to_disk(struct cmsg *msg)
 {
 	struct wal_writer *writer = &wal_writer_singleton;
-	struct wal_msg *wal_msg = (struct wal_msg *) msg;
+	struct wal_write_msg *wal_write_msg = (struct wal_write_msg *) msg;
 	struct error *error;
 
 	ERROR_INJECT_SLEEP(ERRINJ_WAL_DELAY);
 
-	if (writer->in_rollback.route != NULL) {
+	if (writer->in_rollback.route != NULL)
 		/* We're rolling back a failed write. */
-		stailq_concat(&wal_msg->rollback, &wal_msg->commit);
-		vclock_copy(&wal_msg->vclock, &writer->vclock);
-		return;
-	}
+		return wal_writer_rollback_queue(writer, &wal_write_msg->commit);
 
 	/* Xlog is only rotated between queue processing  */
-	if (wal_opt_rotate(writer) != 0) {
-		stailq_concat(&wal_msg->rollback, &wal_msg->commit);
-		vclock_copy(&wal_msg->vclock, &writer->vclock);
-		return wal_writer_begin_rollback(writer);
-	}
+	if (wal_opt_rotate(writer) != 0)
+		return wal_writer_rollback_queue(writer, &wal_write_msg->commit);
 
 	/* Ensure there's enough disk space before writing anything. */
-	if (wal_fallocate(writer, wal_msg->approx_len) != 0) {
-		stailq_concat(&wal_msg->rollback, &wal_msg->commit);
-		vclock_copy(&wal_msg->vclock, &writer->vclock);
-		return wal_writer_begin_rollback(writer);
-	}
+	if (wal_fallocate(writer, wal_write_msg->approx_len) != 0)
+		return wal_writer_rollback_queue(writer, &wal_write_msg->commit);
 
 	/*
 	 * This code tries to write queued requests (=transactions) using as
@@ -1153,23 +1179,25 @@ wal_write_to_disk(struct cmsg *msg)
 	 * of request in xlog file is stored inside `struct journal_entry`.
 	 */
 
-	struct stailq input;
-	stailq_create(&input);
-	stailq_concat(&input, &wal_msg->commit);
+	struct stailq written;
+	stailq_create(&written);
+
 	struct stailq output;
 	stailq_create(&output);
-	while (!stailq_empty(&input)) {
+	while (!stailq_empty(&wal_write_msg->commit)) {
 		/* Start a wal memory buffer transaction. */
 		xrow_buf_tx_begin(&writer->xrow_buf, &writer->vclock);
-		ssize_t rc = wal_write_xlog_batch(writer, &input, &output);
+		ssize_t rc = wal_write_xlog_batch(writer,
+						  &wal_write_msg->commit,
+						  &output);
 		if (rc < 0) {
 			xrow_buf_tx_rollback(&writer->xrow_buf);
 			/*
 			 * Put processed entries and tail of write
 			 * queue to a rollback list.
 			 */
-			stailq_concat(&wal_msg->rollback, &output);
-			stailq_concat(&wal_msg->rollback, &input);
+			stailq_concat(&output, &wal_write_msg->commit);
+			wal_writer_rollback_queue(writer, &output);
 		} else {
 			xrow_buf_tx_commit(&writer->xrow_buf);
 			fiber_cond_signal(&writer->xrow_buf_cond);
@@ -1182,10 +1210,21 @@ wal_write_to_disk(struct cmsg *msg)
 			 * Schedule processed entries to commit
 			 * and update the wal vclock.
 			 */
-			stailq_concat(&wal_msg->commit, &output);
+			stailq_concat(&written, &output);
 		}
 	}
 
+	if (!stailq_empty(&written)) {
+		/* Schedule entries to commit. */
+		struct wal_schedule_msg *msg = (struct wal_schedule_msg *)
+			mempool_alloc(&writer->schedule_pool);
+		if (msg == NULL)
+			panic("Could not allocate a commit message");
+		stailq_create(&msg->queue);
+		stailq_concat(&msg->queue, &written);
+		cmsg_init(&msg->base, wal_schedule_commit_route);
+		cpipe_push(&writer->tx_prio_pipe, &msg->base);
+	}
 	/*
 	 * Notify TX if the checkpoint threshold has been exceeded.
 	 * Use malloc() for allocating the notification message and
@@ -1214,29 +1253,17 @@ wal_write_to_disk(struct cmsg *msg)
 		error_log(error);
 		diag_clear(diag_get());
 	}
-	/*
-	 * Remember the vclock of the last successfully written row so
-	 * that we can update replicaset.vclock once this message gets
-	 * back to tx.
-	 */
-	vclock_copy(&wal_msg->vclock, &writer->vclock);
-	/*
-	 * We need to start rollback from the first request
-	 * following the last committed request. If
-	 * last_commit_req is NULL, it means we have committed
-	 * nothing, and need to start rollback from the first
-	 * request. Otherwise we rollback from the first request.
-	 */
-	if (!stailq_empty(&wal_msg->rollback)) {
-		struct journal_entry *entry;
-		/* Update status of the successfully committed requests. */
-		stailq_foreach_entry(entry, &wal_msg->rollback, fifo)
-			entry->res = -1;
-		/* Rollback unprocessed requests */
-		wal_writer_begin_rollback(writer);
-	}
 	fiber_gc();
 	wal_notify_watchers(writer, WAL_EVENT_WRITE);
+}
+
+static void
+tx_write_to_disk_done(struct cmsg *base)
+{
+	struct wal_writer *writer = &wal_writer_singleton;
+	struct wal_write_msg *msg =
+		container_of(base, struct wal_write_msg, base);
+	mempool_free(&writer->msg_pool, msg);
 }
 
 
@@ -1277,6 +1304,9 @@ wal_writer_f(va_list ap)
 	 */
 	xrow_buf_create(&writer->xrow_buf);
 	fiber_cond_create(&writer->xrow_buf_cond);
+
+	mempool_create(&writer->schedule_pool, &cord()->slabc,
+		       sizeof(struct wal_schedule_msg));
 
 	/** Initialize eio in this thread */
 	coio_enable();
@@ -1354,20 +1384,20 @@ wal_write(struct journal *journal, struct journal_entry *entry)
 		goto fail;
 	}
 
-	struct wal_msg *batch;
+	struct wal_write_msg *batch;
 	if (!stailq_empty(&writer->wal_pipe.input) &&
-	    (batch = wal_msg(stailq_first_entry(&writer->wal_pipe.input,
+	    (batch = wal_write_msg(stailq_first_entry(&writer->wal_pipe.input,
 						struct cmsg, fifo)))) {
 
 		stailq_add_tail_entry(&batch->commit, entry, fifo);
 	} else {
-		batch = (struct wal_msg *)mempool_alloc(&writer->msg_pool);
+		batch = (struct wal_write_msg *)mempool_alloc(&writer->msg_pool);
 		if (batch == NULL) {
-			diag_set(OutOfMemory, sizeof(struct wal_msg),
-				 "region", "struct wal_msg");
+			diag_set(OutOfMemory, sizeof(struct wal_write_msg),
+				 "region", "struct wal_write_msg");
 			goto fail;
 		}
-		wal_msg_create(batch);
+		wal_write_msg_create(batch);
 		/*
 		 * Sic: first add a request, then push the batch,
 		 * since cpipe_push() may pass the batch to WAL
@@ -1376,6 +1406,7 @@ wal_write(struct journal *journal, struct journal_entry *entry)
 		stailq_add_tail_entry(&batch->commit, entry, fifo);
 		cpipe_push(&writer->wal_pipe, &batch->base);
 	}
+	writer->last_scheduled_entry = entry;
 	batch->approx_len += entry->approx_len;
 	writer->wal_pipe.n_input += entry->n_rows * XROW_IOVMAX;
 	cpipe_flush_input(&writer->wal_pipe);
