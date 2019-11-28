@@ -191,6 +191,16 @@ struct wal_writer
 	struct fiber_cond xrow_buf_cond;
 	/** Message pool allocates wal to tx messages. */
 	struct mempool schedule_pool;
+	/**
+	 * List og journal entries awaiting for commit.
+	 */
+	struct stailq commit_queue;
+	/**
+	 * Condition signaled when when committing fiber has something
+	 * to do: new entries or changed commit condition (will be
+	 * used for synchronous replication implementation).
+	 */
+	struct fiber_cond commit_cond;
 };
 
 struct wal_write_msg {
@@ -472,6 +482,9 @@ wal_writer_create(struct wal_writer *writer, enum wal_mode wal_mode,
 	fiber_cond_create(&writer->wal_gc_cond);
 	writer->gc_wal_vclock = NULL;
 	vclock_create(&writer->gc_first_vclock);
+
+	stailq_create(&writer->commit_queue);
+	fiber_cond_create(&writer->commit_cond);
 }
 
 /** Destroy a WAL writer structure. */
@@ -1179,9 +1192,6 @@ wal_write_to_disk(struct cmsg *msg)
 	 * of request in xlog file is stored inside `struct journal_entry`.
 	 */
 
-	struct stailq written;
-	stailq_create(&written);
-
 	struct stailq output;
 	stailq_create(&output);
 	while (!stailq_empty(&wal_write_msg->commit)) {
@@ -1210,21 +1220,11 @@ wal_write_to_disk(struct cmsg *msg)
 			 * Schedule processed entries to commit
 			 * and update the wal vclock.
 			 */
-			stailq_concat(&written, &output);
+			stailq_concat(&writer->commit_queue, &output);
+			fiber_cond_signal(&writer->commit_cond);
 		}
 	}
 
-	if (!stailq_empty(&written)) {
-		/* Schedule entries to commit. */
-		struct wal_schedule_msg *msg = (struct wal_schedule_msg *)
-			mempool_alloc(&writer->schedule_pool);
-		if (msg == NULL)
-			panic("Could not allocate a commit message");
-		stailq_create(&msg->queue);
-		stailq_concat(&msg->queue, &written);
-		cmsg_init(&msg->base, wal_schedule_commit_route);
-		cpipe_push(&writer->tx_prio_pipe, &msg->base);
-	}
 	/*
 	 * Notify TX if the checkpoint threshold has been exceeded.
 	 * Use malloc() for allocating the notification message and
@@ -1266,6 +1266,33 @@ tx_write_to_disk_done(struct cmsg *base)
 	mempool_free(&writer->msg_pool, msg);
 }
 
+/*
+ * Wal commit queue processing fiber main function. This fiber
+ * tracks commit queue entries and checks them against a commit
+ * condition (to be in the commit queue is enough to be committed
+ * right now but synchronous replication requires a majority
+ * check which will be implemented in the near future.
+ */
+static int
+wal_commit_f(va_list ap)
+{
+	struct wal_writer *writer = va_arg(ap, struct wal_writer *);
+	while (!fiber_is_cancelled()) {
+		if (!stailq_empty(&writer->commit_queue)) {
+			/* Schedule entries to commit. */
+			struct wal_schedule_msg *msg = (struct wal_schedule_msg *)
+				mempool_alloc(&writer->schedule_pool);
+			if (msg == NULL)
+				panic("Could not allocate a commit message");
+			stailq_create(&msg->queue);
+			stailq_concat(&msg->queue, &writer->commit_queue);
+			cmsg_init(&msg->base, wal_schedule_commit_route);
+			cpipe_push(&writer->tx_prio_pipe, &msg->base);
+		}
+		fiber_cond_wait(&writer->commit_cond);
+	}
+	return 0;
+}
 
 /*
  * WAL garbage collection fiber.
@@ -1324,7 +1351,16 @@ wal_writer_f(va_list ap)
 	fiber_set_joinable(wal_gc_fiber, true);
 	fiber_start(wal_gc_fiber, writer);
 
+	struct fiber *wal_commit_fiber = fiber_new("wal_commit", wal_commit_f);
+	if (wal_commit_fiber == NULL)
+		panic("Could not create commit fiber");
+	fiber_set_joinable(wal_commit_fiber, true);
+	fiber_start(wal_commit_fiber, writer);
+
 	cbus_loop(&endpoint);
+
+	fiber_cancel(wal_commit_fiber);
+	fiber_join(wal_commit_fiber);
 
 	fiber_cancel(wal_gc_fiber);
 	fiber_join(wal_gc_fiber);
