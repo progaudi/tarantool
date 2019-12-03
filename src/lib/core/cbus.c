@@ -143,6 +143,13 @@ cpipe_destroy(struct cpipe *pipe)
 	struct cmsg_poison *poison = malloc(sizeof(struct cmsg_poison));
 	cmsg_init(&poison->msg, route);
 	poison->endpoint = pipe->endpoint;
+
+	/*
+	 * The thread should not be canceled while mutex is locked
+	*/
+	int old_cancel_state;
+	tt_pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancel_state);
+
 	/*
 	 * Avoid the general purpose cpipe_push_input() since
 	 * we want to control the way the poison message is
@@ -164,6 +171,8 @@ cpipe_destroy(struct cpipe *pipe)
 	 */
 	ev_async_send(endpoint->consumer, &endpoint->async);
 	tt_pthread_mutex_unlock(&endpoint->mutex);
+
+	tt_pthread_setcancelstate(old_cancel_state, NULL);
 
 	TRASH(pipe);
 }
@@ -284,6 +293,17 @@ cpipe_flush_cb(ev_loop *loop, struct ev_async *watcher, int events)
 	/* Trigger task processing when the queue becomes non-empty. */
 	bool output_was_empty;
 
+	/*
+	 * We need to set a thread cancellation guard, because
+	 * another thread may cancel the current thread
+	 * (write() is a cancellation point in ev_async_send)
+	 * and the activation of the ev_async watcher
+	 * through ev_async_send will fail.
+	 */
+
+	int old_cancel_state;
+	tt_pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancel_state);
+
 	tt_pthread_mutex_lock(&endpoint->mutex);
 	output_was_empty = stailq_empty(&endpoint->output);
 	/** Flush input */
@@ -297,6 +317,8 @@ cpipe_flush_cb(ev_loop *loop, struct ev_async *watcher, int events)
 
 		ev_async_send(endpoint->consumer, &endpoint->async);
 	}
+
+	tt_pthread_setcancelstate(old_cancel_state, NULL);
 }
 
 void
