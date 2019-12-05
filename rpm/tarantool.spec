@@ -70,17 +70,18 @@ BuildRequires: libunwind-devel
 %endif
 
 # For tests
-%if (0%{?fedora} >= 22 || 0%{?rhel} == 7)
-BuildRequires: python >= 2.7
-BuildRequires: python-six >= 1.9.0
-BuildRequires: python-gevent >= 1.0
-BuildRequires: python-yaml >= 3.0.9
-%endif
 %if (0%{?fedora} >= 31 || 0%{?rhel} >= 8)
 BuildRequires: python2 >= 2.7
 BuildRequires: python2-six >= 1.9.0
 BuildRequires: python2-gevent >= 1.0
 BuildRequires: python2-yaml >= 3.0.9
+%else
+%if (0%{?rhel} != 6)
+BuildRequires: python >= 2.7
+BuildRequires: python-six >= 1.9.0
+BuildRequires: python-gevent >= 1.0
+BuildRequires: python-yaml >= 3.0.9
+%endif
 %endif
 
 Name: tarantool
@@ -160,13 +161,13 @@ make %{?_smp_mflags}
 rm -rf %{buildroot}%{_datarootdir}/doc/tarantool/
 
 %check
-%if (0%{?fedora} >= 22 || 0%{?rhel} >= 7)
 # https://github.com/tarantool/tarantool/issues/1227
 echo "self.skip = True" > ./test/app/socket.skipcond
 # https://github.com/tarantool/tarantool/issues/1322
 echo "self.skip = True" > ./test/app/digest.skipcond
 # run a safe subset of the test suite
-cd test && ./test-run.py --force -j 1 unit/ app/ app-tap/ box/ box-tap/ engine/ vinyl/
+%if (0%{?rhel} != 6)
+	TEST_RUN_EXCLUDE='replication/' make test-force
 %endif
 
 %pre
