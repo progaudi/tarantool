@@ -598,7 +598,7 @@ test_run:grep_log('cfg_tester7', 'set \'replication\' configuration option to', 
  | - set 'replication' configuration option to
  | ...
 -- test there is no password in log
-test_run:grep_log('cfg_tester7', 'test-cluster-cookie', 1000)
+test_run:grep_log('cfg_tester7', 'test%-cluster%-cookie', 1000)
  | ---
  | - null
  | ...
