@@ -118,14 +118,16 @@ tarantoolsqlIncrementMaxid(uint64_t *space_max_id);
 /**
  * Encode format as entry to be inserted to _space on @region.
  * @param region Region to use.
- * @param def Space definition to encode.
+ * @param fields Space format.
+ * @param field_count Number of fields.
  * @param[out] size Size of result allocation.
  *
  * @retval NULL Error.
  * @retval not NULL Pointer to msgpack on success.
  */
 char *
-sql_encode_table(struct region *region, struct space_def *def, uint32_t *size);
+sql_encode_table_format(struct region *region, struct field_def *fields,
+			uint32_t field_count, uint32_t *size);
 
 /**
  * Encode "opts" dictionary for _space entry on @region.

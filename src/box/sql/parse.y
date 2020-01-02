@@ -289,10 +289,14 @@ carglist ::= .
 %type cconsname { struct Token }
 cconsname(N) ::= CONSTRAINT nm(X). { N = X; }
 cconsname(N) ::= . { N = Token_nil; }
-ccons ::= DEFAULT term(X).            {sqlAddDefaultValue(pParse,&X);}
-ccons ::= DEFAULT LP expr(X) RP.      {sqlAddDefaultValue(pParse,&X);}
-ccons ::= DEFAULT PLUS term(X).       {sqlAddDefaultValue(pParse,&X);}
-ccons ::= DEFAULT MINUS(A) term(X).      {
+ccons ::= default_clause_1.
+default_clause_1 ::= DEFAULT term(X).           {sqlAddDefaultValue(pParse,&X);}
+ccons ::= default_clause_2.
+default_clause_2 ::= DEFAULT LP expr(X) RP.     {sqlAddDefaultValue(pParse,&X);}
+ccons ::= default_clause_3.
+default_clause_3 ::= DEFAULT PLUS term(X).      {sqlAddDefaultValue(pParse,&X);}
+ccons ::= default_clause_4.
+default_clause_4 ::= DEFAULT MINUS(A) term(X).      {
   ExprSpan v;
   v.pExpr = sqlPExpr(pParse, TK_UMINUS, X.pExpr, 0);
   v.zStart = A.z;
@@ -303,13 +307,18 @@ ccons ::= DEFAULT MINUS(A) term(X).      {
 // In addition to the type name, we also care about the primary key and
 // UNIQUE constraints.
 //
-ccons ::= NULL onconf(R).        {
+ccons ::= null_cons.
+null_cons ::= NULL onconf(R).        {
     sql_column_add_nullable_action(pParse, ON_CONFLICT_ACTION_NONE);
     /* Trigger nullability mismatch error if required. */
     if (R != ON_CONFLICT_ACTION_ABORT)
         sql_column_add_nullable_action(pParse, R);
 }
-ccons ::= NOT NULL onconf(R).    {sql_column_add_nullable_action(pParse, R);}
+ccons ::= not_null_cons.
+not_null_cons ::= NOT NULL onconf(R). {
+  sql_column_add_nullable_action(pParse, R);
+}
+
 ccons ::= cconsname(N) PRIMARY KEY sortorder(Z). {
   create_index_def_init(&pParse->create_index_def, NULL, &N, NULL,
                         SQL_INDEX_TYPE_CONSTRAINT_PK, Z, false);
@@ -335,7 +344,8 @@ ccons ::= cconsname(N) REFERENCES nm(T) eidlist_opt(TA) matcharg(M) refargs(R). 
   sql_create_foreign_key(pParse);
 }
 ccons ::= defer_subclause(D).    {fk_constraint_change_defer_mode(pParse, D);}
-ccons ::= COLLATE id(C).        {sqlAddCollateType(pParse, &C);}
+ccons ::= collate_clause.
+collate_clause ::= COLLATE id(C).        {sqlAddCollateType(pParse, &C);}
 
 // The optional AUTOINCREMENT keyword
 %type autoinc {int}
@@ -1729,9 +1739,44 @@ alter_table_start(A) ::= ALTER TABLE fullname(T) . { A = T; }
 
 %type alter_add_constraint {struct alter_args}
 alter_add_constraint(A) ::= alter_table_start(T) ADD CONSTRAINT nm(N). {
+   A.table_name = T;
+   A.name = N;
+   pParse->initiateTTrans = true;
+ }
+
+%type alter_add_column {struct alter_args}
+alter_add_column(A) ::= alter_table_start(T) ADD column_name(N). {
   A.table_name = T;
   A.name = N;
   pParse->initiateTTrans = true;
+}
+
+column_name(N) ::= nm(A). { N = A; }
+
+cmd ::= alter_column_def alter_carglist add_column_end.
+
+alter_column_def ::= alter_add_column(N) typedef(Y). {
+  create_column_def_init(&pParse->create_column_def, N.table_name, &N.name, &Y);
+  sql_alter_add_column_start(pParse);
+}
+
+/*
+ * "alter_carglist" is a list of additional constraints and
+ * clauses that come after the column name and column type in a
+ * ALTER TABLE ADD [COLUMN] statement.
+ */
+alter_carglist ::= alter_carglist alter_ccons.
+alter_carglist ::= .
+alter_ccons ::= default_clause_1.
+alter_ccons ::= default_clause_2.
+alter_ccons ::= default_clause_3.
+alter_ccons ::= default_clause_4.
+alter_ccons ::= null_cons.
+alter_ccons ::= not_null_cons.
+alter_ccons ::= collate_clause.
+
+add_column_end ::= . {
+  sql_alter_add_column_end(pParse);
 }
 
 cmd ::= alter_add_constraint(N) FOREIGN KEY LP eidlist(FA) RP REFERENCES

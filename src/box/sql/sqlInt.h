@@ -2231,6 +2231,7 @@ struct Parse {
 	 * from parse.y
 	 */
 	union {
+		struct create_column_def create_column_def;
 		struct create_ck_def create_ck_def;
 		struct create_fk_def create_fk_def;
 		struct create_index_def create_index_def;
@@ -2843,6 +2844,18 @@ sqlStartTable(Parse *, Token *);
 void sqlAddColumn(Parse *, Token *, struct type_def *);
 
 /**
+ * Set the is_nullable flag on the column @a field.
+ *
+ * @param field           Column to set.
+ * @param nullable_action on_conflict_action value.
+ * @param space_name Name of the space to which the column
+ *                   belongs. Needed to set error.
+ *
+ * @retval 0  Success.
+ * @retval -1 nullable_action has been already set.
+ */
+
+/**
  * This routine is called by the parser while in the middle of
  * parsing a CREATE TABLE statement.  A "NOT NULL" constraint has
  * been seen on a column.  This routine sets the is_nullable flag
@@ -2867,6 +2880,19 @@ sqlAddPrimaryKey(struct Parse *parse);
  */
 void
 sql_create_check_contraint(Parse *parser);
+
+/**
+ * Add default value to the column @a field.
+ *
+ * @param parse      Parsing context.
+ * @param field      Column to set.
+ * @param span       Default expression.
+ * @param space_name Name of the space to which the column
+ *                   belongs. Needed to set error.
+ *
+ * @retval 0  Success.
+ * @retval -1 Error.
+ */
 
 void sqlAddDefaultValue(Parse *, ExprSpan *);
 void sqlAddCollateType(Parse *, Token *);
@@ -4030,6 +4056,20 @@ sql_alter_table_rename(struct Parse *parse);
  */
 void
 sql_alter_ck_constraint_enable(struct Parse *parse);
+
+/**
+ * Process the statement: do the checks of space and column
+ * definition. Create new format array with a new column.
+ */
+void
+sql_alter_add_column_start(struct Parse *parse);
+
+/**
+ * Encode new format array and emit code to update an entry in
+ * _space.
+ */
+void
+sql_alter_add_column_end(struct Parse *parse);
 
 /**
  * Return the length (in bytes) of the token that begins at z[0].

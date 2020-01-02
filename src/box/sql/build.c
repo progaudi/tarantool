@@ -368,11 +368,21 @@ void
 sql_column_add_nullable_action(struct Parse *parser,
 			       enum on_conflict_action nullable_action)
 {
-	struct space *space = parser->create_table_def.new_space;
-	if (space == NULL || NEVER(space->def->field_count < 1))
+	struct space_def *def = NULL;
+	struct field_def *field = NULL;
+	if (parser->create_table_def.new_space != NULL) {
+		def = parser->create_table_def.new_space->def;
+		if (NEVER(def->field_count < 1))
+			return;
+		field = &def->fields[def->field_count - 1];
+	} else if (parser->create_column_def.space_def != NULL) {
+		def = parser->create_column_def.space_def;
+		uint32_t field_count =
+			parser->create_column_def.new_field_count;
+		field = &parser->create_column_def.new_fields[field_count - 1];
+	} else {
 		return;
-	struct space_def *def = space->def;
-	struct field_def *field = &def->fields[def->field_count - 1];
+	}
 	if (field->nullable_action != ON_CONFLICT_ACTION_DEFAULT &&
 	    nullable_action != field->nullable_action) {
 		/* Prevent defining nullable_action many times. */
@@ -390,51 +400,53 @@ sql_column_add_nullable_action(struct Parse *parser,
 }
 
 /*
- * The expression is the default value for the most recently added column
- * of the table currently under construction.
+ * The expression is the default value for the most recently added
+ * column.
  *
  * Default value expressions must be constant.  Raise an exception if this
  * is not the case.
  *
  * This routine is called by the parser while in the middle of
- * parsing a CREATE TABLE statement.
+ * parsing a <CREATE TABLE> or <ALTER TABLE ADD COLUMN> statement.
  */
 void
 sqlAddDefaultValue(Parse * pParse, ExprSpan * pSpan)
 {
 	sql *db = pParse->db;
-	struct space *p = pParse->create_table_def.new_space;
-	if (p != NULL) {
-		assert(p->def->opts.is_ephemeral);
-		struct space_def *def = p->def;
-		if (!sqlExprIsConstantOrFunction
-		    (pSpan->pExpr, db->init.busy)) {
-			const char *column_name =
-				def->fields[def->field_count - 1].name;
-			diag_set(ClientError, ER_CREATE_SPACE, def->name,
-				 tt_sprintf("default value of column '%s' is "\
-					    "not constant", column_name));
-			pParse->is_aborted = true;
-		} else {
-			assert(def != NULL);
-			struct field_def *field =
-				&def->fields[def->field_count - 1];
-			struct region *region = &pParse->region;
-			uint32_t default_length = (int)(pSpan->zEnd - pSpan->zStart);
-			field->default_value = region_alloc(region,
-							    default_length + 1);
-			if (field->default_value == NULL) {
-				diag_set(OutOfMemory, default_length + 1,
-					 "region_alloc",
-					 "field->default_value");
-				pParse->is_aborted = true;
-				return;
-			}
-			strncpy(field->default_value, pSpan->zStart,
-				default_length);
-			field->default_value[default_length] = '\0';
-		}
+	struct space_def *def = NULL;
+	struct field_def *field = NULL;
+	if (pParse->create_table_def.new_space != NULL) {
+		def = pParse->create_table_def.new_space->def;
+		assert(def->opts.is_ephemeral);
+		field = &def->fields[def->field_count - 1];
+	} else if (pParse->create_column_def.space_def != NULL) {
+		def = pParse->create_column_def.space_def;
+		uint32_t field_count =
+			pParse->create_column_def.new_field_count;
+		field = &pParse->create_column_def.new_fields[field_count - 1];
+	} else {
+		goto add_default_value_exit;
 	}
+	if (!sqlExprIsConstantOrFunction(pSpan->pExpr, db->init.busy)) {
+		diag_set(ClientError, ER_CREATE_SPACE, def->name,
+			 tt_sprintf("default value of column '%s' is not "
+				    "constant", field->name));
+		pParse->is_aborted = true;
+	} else {
+		assert(def != NULL);
+		struct region *region = &pParse->region;
+		uint32_t default_length = (int)(pSpan->zEnd - pSpan->zStart);
+		field->default_value = region_alloc(region, default_length + 1);
+		if (field->default_value == NULL) {
+			diag_set(OutOfMemory, default_length + 1,
+				 "region_alloc", "field->default_value");
+			pParse->is_aborted = true;
+			return;
+		}
+		strncpy(field->default_value, pSpan->zStart, default_length);
+		field->default_value[default_length] = '\0';
+	}
+add_default_value_exit:
 	sql_expr_delete(db, pSpan->pExpr, false);
 }
 
@@ -686,17 +698,27 @@ void
 sqlAddCollateType(Parse * pParse, Token * pToken)
 {
 	struct space *space = pParse->create_table_def.new_space;
-	if (space == NULL)
+	uint32_t *coll_id = NULL;
+	if (space != NULL) {
+		uint32_t i = space->def->field_count - 1;
+		coll_id = &space->def->fields[i].coll_id;
+	} else if (pParse->create_column_def.space_def != NULL) {
+		uint32_t field_count =
+			pParse->create_column_def.new_field_count;
+		struct field_def *field =
+			&pParse->create_column_def.new_fields[field_count - 1];
+		coll_id = &field->coll_id;
+	} else {
 		return;
-	uint32_t i = space->def->field_count - 1;
+	}
 	sql *db = pParse->db;
 	char *coll_name = sql_name_from_token(db, pToken);
 	if (coll_name == NULL) {
 		pParse->is_aborted = true;
 		return;
 	}
-	uint32_t *coll_id = &space->def->fields[i].coll_id;
-	if (sql_get_coll_seq(pParse, coll_name, coll_id) != NULL) {
+	if (sql_get_coll_seq(pParse, coll_name, coll_id) != NULL &&
+	    space != NULL) {
 		/* If the column is declared as "<name> PRIMARY KEY COLLATE <type>",
 		 * then an index may have been created on this column before the
 		 * collation type was added. Correct this if it is the case.
@@ -858,7 +880,9 @@ vdbe_emit_space_create(struct Parse *pParse, int space_id_reg,
 	if (table_opts_stmt == NULL)
 		goto error;
 	uint32_t table_stmt_sz = 0;
-	char *table_stmt = sql_encode_table(region, space->def, &table_stmt_sz);
+	char *table_stmt = sql_encode_table_format(region, space->def->fields,
+						   space->def->field_count,
+						   &table_stmt_sz);
 	if (table_stmt == NULL)
 		goto error;
 	char *raw = sqlDbMallocRaw(pParse->db,

@@ -154,6 +154,7 @@ enum sql_index_type {
 
 enum entity_type {
 	ENTITY_TYPE_TABLE = 0,
+	ENTITY_TYPE_COLUMN,
 	ENTITY_TYPE_VIEW,
 	ENTITY_TYPE_INDEX,
 	ENTITY_TYPE_TRIGGER,
@@ -225,6 +226,18 @@ struct create_table_def {
 	bool has_autoinc;
 	/** Id of field with AUTOINCREMENT. */
 	uint32_t autoinc_fieldno;
+};
+
+struct create_column_def {
+	struct create_entity_def base;
+	/** Column type. */
+	struct type_def *type_def;
+	/** Already existing space def. */
+	struct space_def *space_def;
+	/** New format array with the new column. */
+	struct field_def *new_fields;
+	/** Old field count + 1. */
+	uint32_t new_field_count;
 };
 
 struct create_view_def {
@@ -484,6 +497,16 @@ create_table_def_init(struct create_table_def *table_def, struct Token *name,
 	rlist_create(&table_def->new_fkey);
 	rlist_create(&table_def->new_check);
 	table_def->autoinc_fieldno = 0;
+}
+
+static inline void
+create_column_def_init(struct create_column_def *column_def,
+		       struct SrcList *table_name, struct Token *name,
+		       struct type_def *type_def)
+{
+	create_entity_def_init(&column_def->base, ENTITY_TYPE_COLUMN,
+			       table_name, name, false);
+	column_def->type_def = type_def;
 }
 
 static inline void

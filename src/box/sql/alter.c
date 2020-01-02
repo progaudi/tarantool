@@ -36,6 +36,7 @@
 #include "sqlInt.h"
 #include "box/box.h"
 #include "box/schema.h"
+#include "tarantoolInt.h"
 
 void
 sql_alter_table_rename(struct Parse *parse)
@@ -208,4 +209,128 @@ rename_trigger(sql *db, char const *sql_stmt, char const *table_name,
 				      (int)((tname.z) - sql_stmt), sql_stmt,
 				      table_name, tname.z + tname.n);
 	return new_sql_stmt;
+}
+
+void
+sql_alter_add_column_start(struct Parse *parse)
+{
+	struct create_column_def *create_column_def = &parse->create_column_def;
+	struct alter_entity_def *alter_entity_def =
+		&create_column_def->base.base;
+	assert(alter_entity_def->entity_type == ENTITY_TYPE_COLUMN);
+	assert(alter_entity_def->alter_action == ALTER_ACTION_CREATE);
+
+	const char *space_name =
+		alter_entity_def->entity_name->a[0].zName;
+	struct space *space = space_by_name(space_name);
+	struct sql *db = parse->db;
+	if (space == NULL) {
+		diag_set(ClientError, ER_NO_SUCH_SPACE, space_name);
+		goto tnt_error;
+	}
+
+	struct space_def *def = space->def;
+	create_column_def->space_def = def;
+	if (sql_space_def_check_format(def) != 0)
+		goto tnt_error;
+	uint32_t new_field_count = def->field_count + 1;
+	create_column_def->new_field_count = new_field_count;
+
+#if SQL_MAX_COLUMN
+	if ((int)new_field_count > db->aLimit[SQL_LIMIT_COLUMN]) {
+		diag_set(ClientError, ER_SQL_COLUMN_COUNT_MAX, def->name,
+			 new_field_count, db->aLimit[SQL_LIMIT_COLUMN]);
+		goto tnt_error;
+	}
+#endif
+	/*
+	 * Create new fields array and add the new column's
+	 * field_def to its end. During copying don't make
+	 * duplicates of the non-scalar fields (name,
+	 * default_value, default_value_expr), because they will
+	 * be just copied and encoded to the msgpack array on sql
+	 * allocator in sql_alter_add_column_end().
+	 */
+	uint32_t size = sizeof(struct field_def) * new_field_count;
+	struct region *region = &parse->region;
+	struct field_def *new_fields = region_alloc(region, size);
+	if (new_fields == NULL) {
+		diag_set(OutOfMemory, size, "region_alloc", "new_fields");
+		goto tnt_error;
+	}
+	memcpy(new_fields, def->fields,
+	       sizeof(struct field_def) * def->field_count);
+	create_column_def->new_fields = new_fields;
+	struct field_def *new_column_def = &new_fields[def->field_count];
+
+	memcpy(new_column_def, &field_def_default, sizeof(struct field_def));
+	struct Token *name = &create_column_def->base.name;
+	new_column_def->name =
+		sql_normalized_name_region_new(region, name->z, name->n);
+	if (new_column_def->name == NULL)
+		goto tnt_error;
+	if (def->opts.is_view) {
+		diag_set(ClientError, ER_SQL_CANT_ADD_COLUMN_TO_VIEW,
+			 new_column_def->name, def->name);
+		goto tnt_error;
+	}
+
+	new_column_def->type = create_column_def->type_def->type;
+
+exit_alter_add_column_start:
+	sqlSrcListDelete(db, alter_entity_def->entity_name);
+	return;
+tnt_error:
+	parse->is_aborted = true;
+	goto exit_alter_add_column_start;
+}
+
+void
+sql_alter_add_column_end(struct Parse *parse)
+{
+	struct create_column_def *create_column_def = &parse->create_column_def;
+	uint32_t new_field_count = create_column_def->new_field_count;
+	uint32_t table_stmt_sz = 0;
+	char *table_stmt =
+		sql_encode_table_format(&parse->region,
+					create_column_def->new_fields,
+					new_field_count, &table_stmt_sz);
+	if (table_stmt == NULL) {
+		parse->is_aborted = true;
+		return;
+	}
+	char *raw = sqlDbMallocRaw(parse->db, table_stmt_sz);
+	if (raw == NULL){
+		parse->is_aborted = true;
+		return;
+	}
+	memcpy(raw, table_stmt, table_stmt_sz);
+
+	struct space *system_space = space_by_id(BOX_SPACE_ID);
+	assert(system_space != NULL);
+	int cursor = parse->nTab++;
+	struct Vdbe *v = sqlGetVdbe(parse);
+	assert(v != NULL);
+	vdbe_emit_open_cursor(parse, cursor, 0, system_space);
+	sqlVdbeChangeP5(v, OPFLAG_SYSTEMSP);
+
+	int key_reg = sqlGetTempReg(parse);
+	sqlVdbeAddOp2(v, OP_Integer, create_column_def->space_def->id, key_reg);
+	int addr = sqlVdbeAddOp4Int(v, OP_Found, cursor, 0, key_reg, 1);
+	sqlVdbeAddOp2(v, OP_Halt, -1, ON_CONFLICT_ACTION_ABORT);
+	sqlVdbeJumpHere(v, addr);
+
+	const int system_space_field_count = 7;
+	int tuple_reg = sqlGetTempRange(parse, system_space_field_count + 1);
+	for (int i = 0; i < system_space_field_count - 1; ++i)
+		sqlVdbeAddOp3(v, OP_Column, cursor, i, tuple_reg + i);
+	sqlVdbeAddOp1(v, OP_Close, cursor);
+
+	sqlVdbeAddOp2(v, OP_Integer, new_field_count, tuple_reg + 4);
+	sqlVdbeAddOp4(v, OP_Blob, table_stmt_sz, tuple_reg + 6,
+		      SQL_SUBTYPE_MSGPACK, raw, P4_DYNAMIC);
+	sqlVdbeAddOp3(v, OP_MakeRecord, tuple_reg, system_space_field_count,
+		      tuple_reg + system_space_field_count);
+	sqlVdbeAddOp4(v, OP_IdxReplace, tuple_reg + system_space_field_count, 0,
+		      0, (char *)system_space, P4_SPACEPTR);
 }

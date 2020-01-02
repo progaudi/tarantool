@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 test = require("sqltester")
-test:plan(50)
+test:plan(57)
 
 test:do_execsql_test(
     "alter-1.1",
@@ -584,5 +584,79 @@ test:do_catchsql_test(
 --         1, "FOREIGN KEY constraint failed"
 --         -- </alter-7.11>
 --     })
+
+--
+-- gh-3075: Check <ALTER TABLE table ADD COLUMN column> statement.
+--
+test:do_execsql_test(
+    "alter-9.1",
+    [[
+        CREATE TABLE test (a INTEGER PRIMARY KEY);
+        ALTER TABLE test ADD b INTEGER;
+    ]], {
+        -- <alter-9.1>
+        -- </alter-9.1>
+    })
+
+test:do_catchsql_test(
+    "alter-9.2",
+    [[
+        CREATE VIEW v AS SELECT * FROM test;
+        ALTER TABLE v ADD b INTEGER;
+    ]], {
+        -- <alter-9.2>
+        1,"Can't add column 'B' to the view 'V'"
+        -- </alter-9.2>
+    })
+
+test:do_execsql_test(
+    "alter-9.3",
+    [[
+        ALTER TABLE test ADD c TEXT NOT NULL DEFAULT ('a') COLLATE "unicode_ci";
+    ]], {
+        -- <alter-9.3>
+        -- </alter-9.3>
+    })
+
+test:do_execsql_test(
+    "alter-9.4",
+    [[
+        INSERT INTO test(a, b) VALUES (1, 1);
+        SELECT * FROM test;
+    ]], {
+        -- <alter-9.4>
+        1,1,"a"
+        -- </alter-9.4>
+    })
+
+test:do_catchsql_test(
+    "alter-9.5",
+    [[
+        INSERT INTO test VALUES (2, 2, NULL);
+    ]], {
+        -- <alter-9.5>
+        1,"Failed to execute SQL statement: NOT NULL constraint failed: TEST.C"
+                -- </alter-9.5>
+    })
+
+test:do_execsql_test(
+    "alter-9.6",
+    [[
+        SELECT * FROM test WHERE c LIKE 'A';
+    ]], {
+        -- <alter-9.6>
+        1,1,"a"
+        -- </alter-9.6>
+    })
+
+test:do_catchsql_test(
+    "alter-9.7",
+    [[
+        ALTER TABLE test ADD d INTEGER;
+    ]], {
+        -- <alter-9.7>
+        1,"Tuple field count 3 does not match space field count 4"
+        -- </alter-9.7>
+    })
 
 test:finish_test()
