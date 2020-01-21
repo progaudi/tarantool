@@ -42,6 +42,10 @@
 #define TARANTOOL_LIBEXT "so"
 #endif
 
+/** Is set to the version of builtin libcurl used. */
+#cmakedefine BUNDLED_CURL_VERSION "${BUNDLED_CURL_VERSION}"
+/** Is set to the version of builtin c-ares used. */
+#cmakedefine BUNDLED_ARES_VERSION "${BUNDLED_ARES_VERSION}"
 /**
  * Defined if cpuid() instruction is available.
  */

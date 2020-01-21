@@ -427,6 +427,20 @@ luaopen_tarantool(lua_State *L)
 	lua_pushstring(L, TARANTOOL_C_FLAGS);
 	lua_settable(L, -3);
 
+#ifdef BUNDLED_CURL_VERSION
+	/* build.curl */
+	lua_pushstring(L, "curl");
+	lua_pushstring(L, BUNDLED_CURL_VERSION);
+	lua_settable(L, -3);
+#endif
+
+#ifdef BUNDLED_ARES_VERSION
+	/* build.c_ares */
+	lua_pushstring(L, "c_ares");
+	lua_pushstring(L, BUNDLED_ARES_VERSION);
+	lua_settable(L, -3);
+#endif
+
 	lua_settable(L, -3);    /* box.info.build */
 	return 1;
 }

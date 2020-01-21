@@ -4,6 +4,16 @@ macro(ares_build)
     set(ARES_BINARY_DIR ${PROJECT_BINARY_DIR}/build/ares/work)
     set(ARES_INSTALL_DIR ${PROJECT_BINARY_DIR}/build/ares/dest)
 
+    # Get bundled ares version for `tarantool -v` output.
+    if (EXISTS "${ARES_SOURCE_DIR}/.git" AND GIT)
+        execute_process (COMMAND ${GIT} describe HEAD
+            OUTPUT_VARIABLE BUNDLED_ARES_VERSION
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            WORKING_DIRECTORY ${ARES_SOURCE_DIR})
+            string(REPLACE cares- "" BUNDLED_ARES_VERSION ${BUNDLED_ARES_VERSION})
+            string(REPLACE _ . BUNDLED_ARES_VERSION ${BUNDLED_ARES_VERSION})
+    endif()
+
     # See BuildLibCURL.cmake for details.
     set(ARES_CFLAGS "")
     if (TARGET_OS_DARWIN AND NOT "${CMAKE_OSX_SYSROOT}" STREQUAL "")

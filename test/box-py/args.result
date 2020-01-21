@@ -47,6 +47,8 @@ tarantool --version
 Tarantool 2.minor.patch-<rev>-<commit>
 Target: platform <build>
 Build options: flags
+Curl 7.66.patch
+c-ares 1.15.patch-<rev>-<commit>
 Compiler: cc
 C_FLAGS: flags
 CXX_FLAGS: flags
@@ -55,6 +57,8 @@ tarantool -v
 Tarantool 2.minor.patch-<rev>-<commit>
 Target: platform <build>
 Build options: flags
+Curl 7.66.patch
+c-ares 1.15.patch-<rev>-<commit>
 Compiler: cc
 C_FLAGS: flags
 CXX_FLAGS: flags
@@ -63,6 +67,8 @@ tarantool -V
 Tarantool 2.minor.patch-<rev>-<commit>
 Target: platform <build>
 Build options: flags
+Curl 7.66.patch
+c-ares 1.15.patch-<rev>-<commit>
 Compiler: cc
 C_FLAGS: flags
 CXX_FLAGS: flags
@@ -114,6 +120,8 @@ tarantool -V ${SOURCEDIR}/test/box-py/args.lua 1 2 3
 Tarantool 2.minor.patch-<rev>-<commit>
 Target: platform <build>
 Build options: flags
+Curl 7.66.patch
+c-ares 1.15.patch-<rev>-<commit>
 Compiler: cc
 C_FLAGS: flags
 CXX_FLAGS: flags

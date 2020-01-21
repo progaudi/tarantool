@@ -675,6 +675,12 @@ print_version(void)
 	printf("%s %s\n", tarantool_package(), tarantool_version());
 	printf("Target: %s\n", BUILD_INFO);
 	printf("Build options: %s\n", BUILD_OPTIONS);
+#ifdef BUNDLED_CURL_VERSION
+	printf("Bundled libCURL version: %s\n", BUNDLED_CURL_VERSION);
+#endif
+#ifdef BUNDLED_ARES_VERSION
+	printf("Bundled c-ares version: %s\n", BUNDLED_ARES_VERSION);
+#endif
 	printf("Compiler: %s\n", COMPILER_INFO);
 	printf("C_FLAGS:%s\n", TARANTOOL_C_FLAGS);
 	printf("CXX_FLAGS:%s\n", TARANTOOL_CXX_FLAGS);

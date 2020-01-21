@@ -4,6 +4,16 @@ macro(curl_build)
     set(LIBCURL_BINARY_DIR ${PROJECT_BINARY_DIR}/build/curl/work)
     set(LIBCURL_INSTALL_DIR ${PROJECT_BINARY_DIR}/build/curl/dest)
 
+    # Get bundled curl version for `tarantool -v` output.
+    if (EXISTS "${LIBCURL_SOURCE_DIR}/.git" AND GIT)
+        execute_process (COMMAND ${GIT} describe HEAD
+            OUTPUT_VARIABLE BUNDLED_CURL_VERSION
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            WORKING_DIRECTORY ${LIBCURL_SOURCE_DIR})
+            string(REPLACE curl- "" BUNDLED_CURL_VERSION ${BUNDLED_CURL_VERSION})
+            string(REPLACE _ . BUNDLED_CURL_VERSION ${BUNDLED_CURL_VERSION})
+    endif()
+
     if (BUILD_STATIC)
         set(LIBZ_LIB_NAME libz.a)
     else()
