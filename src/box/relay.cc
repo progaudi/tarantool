@@ -315,7 +315,11 @@ relay_initial_join(int fd, uint64_t sync, struct vclock *vclock)
 
 	/* Respond to the JOIN request with the current vclock. */
 	struct xrow_header row;
-	xrow_encode_vclock_xc(&row, vclock);
+	struct vclock subst_vclock;
+	vclock_copy(&subst_vclock, vclock);
+	/* zero - out 0-th vclock component. */
+	vclock_set(&subst_vclock, 0, 0);
+	xrow_encode_vclock_xc(&row, &subst_vclock);
 	row.sync = sync;
 	coio_write_xrow(&relay->io, &row);
 

@@ -1518,6 +1518,7 @@ box_process_fetch_snapshot(struct ev_io *io, struct xrow_header *header)
 	/* Remember master's vclock after the last request */
 	struct vclock stop_vclock;
 	vclock_copy(&stop_vclock, &replicaset.vclock);
+	vclock_set(&stop_vclock, 0, 0);
 
 	/* Send end of snapshot data marker */
 	struct xrow_header row;
@@ -1599,7 +1600,9 @@ box_process_register(struct ev_io *io, struct xrow_header *header)
 
 	struct xrow_header row;
 	/* Send end of WAL stream marker */
-	xrow_encode_vclock_xc(&row, &replicaset.vclock);
+	vclock_copy(&vclock, &replicaset.vclock);
+	vclock_set(&vclock, 0, 0);
+	xrow_encode_vclock_xc(&row, &vclock);
 	row.sync = header->sync;
 	coio_write_xrow(io, &row);
 
@@ -1735,11 +1738,14 @@ box_process_join(struct ev_io *io, struct xrow_header *header)
 
 	/* Remember master's vclock after the last request */
 	struct vclock stop_vclock;
+	struct vclock vclock;
 	vclock_copy(&stop_vclock, &replicaset.vclock);
+	vclock_copy(&vclock, &stop_vclock);
+	vclock_set(&vclock, 0, 0);
 
 	/* Send end of initial stage data marker */
 	struct xrow_header row;
-	xrow_encode_vclock_xc(&row, &stop_vclock);
+	xrow_encode_vclock_xc(&row, &vclock);
 	row.sync = header->sync;
 	coio_write_xrow(io, &row);
 
@@ -1751,7 +1757,9 @@ box_process_join(struct ev_io *io, struct xrow_header *header)
 	say_info("final data sent.");
 
 	/* Send end of WAL stream marker */
-	xrow_encode_vclock_xc(&row, &replicaset.vclock);
+	vclock_copy(&vclock, &replicaset.vclock);
+	vclock_set(&vclock, 0, 0);
+	xrow_encode_vclock_xc(&row, &vclock);
 	row.sync = header->sync;
 	coio_write_xrow(io, &row);
 
