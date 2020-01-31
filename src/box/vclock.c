@@ -37,6 +37,21 @@
 #include "diag.h"
 #include "tt_static.h"
 
+void
+vclock_set(struct vclock *vclock, uint32_t replica_id, int64_t lsn)
+{
+	assert(lsn >= 0);
+	assert(replica_id < VCLOCK_MAX);
+	vclock->signature -= vclock_get(vclock, replica_id);
+	if (!lsn) {
+	    vclock->map  &= ~(1 << replica_id);
+	    return;
+	}
+	vclock->lsn[replica_id] = lsn;
+	vclock->map |= 1 << replica_id;
+	vclock->signature += lsn;
+}
+
 int64_t
 vclock_follow(struct vclock *vclock, uint32_t replica_id, int64_t lsn)
 {
@@ -50,6 +65,7 @@ vclock_follow(struct vclock *vclock, uint32_t replica_id, int64_t lsn)
 	vclock->signature += lsn - prev_lsn;
 	return prev_lsn;
 }
+
 
 static int
 vclock_snprint(char *buf, int size, const struct vclock *vclock)

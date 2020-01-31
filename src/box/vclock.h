@@ -209,6 +209,17 @@ vclock_calc_sum(const struct vclock *vclock)
 	return sum;
 }
 
+/**
+ * Set vclock component represented by replica id to the desired
+ * value.
+ *
+ * @param vclock Vector clock.
+ * @param replica_id Replica identifier.
+ * @param lsn Lsn to set
+ */
+void
+vclock_set(struct vclock *vclock, uint32_t replica_id, int64_t lsn);
+
 static inline int64_t
 vclock_sum(const struct vclock *vclock)
 {
