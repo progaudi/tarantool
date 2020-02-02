@@ -168,6 +168,12 @@ public:
 	virtual void raise() { throw this; }
 };
 
+class SequenceError: public Exception {
+public:
+	SequenceError(const char *file, unsigned line, const char *format, ...);
+	virtual void raise() { throw this; }
+};
+
 /**
  * Initialize the exception subsystem.
  */

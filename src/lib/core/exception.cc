@@ -287,6 +287,19 @@ CryptoError::CryptoError(const char *file, unsigned line,
 	va_end(ap);
 }
 
+const struct type_info type_SequenceError =
+		make_type("SequenceError", &type_Exception);
+
+SequenceError::SequenceError(const char *file, unsigned line,
+						 const char *format, ...)
+		: Exception(&type_SequenceError, file, line)
+{
+	va_list ap;
+	va_start(ap, format);
+	error_vformat_msg(this, format, ap);
+	va_end(ap);
+}
+
 #define BuildAlloc(type)				\
 	void *p = malloc(sizeof(type));			\
 	if (p == NULL)					\
@@ -383,6 +396,18 @@ BuildCryptoError(const char *file, unsigned line, const char *format, ...)
 {
 	BuildAlloc(CryptoError);
 	CryptoError *e =  new (p) CryptoError(file, line, "");
+	va_list ap;
+	va_start(ap, format);
+	error_vformat_msg(e, format, ap);
+	va_end(ap);
+	return e;
+}
+
+struct error *
+BuildSequenceError(const char *file, unsigned line, const char *format, ...)
+{
+	BuildAlloc(CryptoError);
+	SequenceError *e =  new (p) SequenceError(file, line, "");
 	va_list ap;
 	va_start(ap, format);
 	error_vformat_msg(e, format, ap);

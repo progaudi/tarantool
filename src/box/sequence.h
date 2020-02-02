@@ -171,10 +171,11 @@ sequence_data_iterator_create(void);
  * Get last element of given sequence.
  *
  * @param seq sequence to get value from.
- * @retval last element of sequence.
+ * @result value of sequence.
+ * Return 0 on success, -1 if sequence is not initialized.
  */
-int64_t
-sequence_get_value(struct sequence *seq);
+int
+sequence_get_value(struct sequence *seq, int64_t *result);
 
 #if defined(__cplusplus)
 } /* extern "C" */
