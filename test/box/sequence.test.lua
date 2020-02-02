@@ -771,3 +771,15 @@ sq:next() -- 1
 box.begin() box.space._sequence_data:delete{sq.id} box.rollback()
 sq:next() -- 2
 sq:drop()
+
+--
+-- gh-4752 current value of sequence
+--
+sq = box.schema.sequence.create('test')
+sq:current()
+sq:next()
+sq:current()
+sq:set(42)
+sq:current()
+sq:current()
+sq:drop()

@@ -2270,3 +2270,35 @@ sq:next() -- 2
 sq:drop()
 ---
 ...
+--
+-- gh-4752 current value of sequence
+--
+sq = box.schema.sequence.create('test')
+---
+...
+sq:current()
+---
+- error: Sequence is not initialized yet
+...
+sq:next()
+---
+- 1
+...
+sq:current()
+---
+- 1
+...
+sq:set(42)
+---
+...
+sq:current()
+---
+- 42
+...
+sq:current()
+---
+- 42
+...
+sq:drop()
+---
+...

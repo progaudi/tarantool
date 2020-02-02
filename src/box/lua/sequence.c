@@ -50,6 +50,17 @@ lbox_sequence_next(struct lua_State *L)
 }
 
 static int
+lbox_sequence_current(struct lua_State *L)
+{
+	uint32_t seq_id = luaL_checkinteger(L, 1);
+	int64_t result;
+	if (box_sequence_current(seq_id, &result) != 0)
+		luaT_error(L);
+	luaL_pushint64(L, result);
+	return 1;
+}
+
+static int
 lbox_sequence_set(struct lua_State *L)
 {
 	uint32_t seq_id = luaL_checkinteger(L, 1);
@@ -174,6 +185,7 @@ box_lua_sequence_init(struct lua_State *L)
 {
 	static const struct luaL_Reg sequence_internal_lib[] = {
 		{"next", lbox_sequence_next},
+		{"current", lbox_sequence_current},
 		{"set", lbox_sequence_set},
 		{"reset", lbox_sequence_reset},
 		{NULL, NULL}
