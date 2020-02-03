@@ -691,6 +691,9 @@ relay_subscribe(struct replica *replica, int fd, uint64_t sync,
 	 * join.
 	 */
 	if (replica->gc == NULL && !replica->anon) {
+		struct vclock gc_clock;
+		vclock_copy(&gc_clock, replica_clock);
+		vclock_set(&gc_clock, 0, 0);
 		replica->gc = gc_consumer_register(replica_clock, "replica %s",
 						   tt_uuid_str(&replica->uuid));
 		if (replica->gc == NULL)
@@ -750,22 +753,10 @@ relay_send_row(struct xstream *stream, struct xrow_header *packet)
 {
 	struct relay *relay = container_of(stream, struct relay, stream);
 	assert(iproto_type_is_dml(packet->type));
-	/*
-	 * Transform replica local requests to IPROTO_NOP so as to
-	 * promote vclock on the replica without actually modifying
-	 * any data.
-	 */
+	/* We do not relay replica-local rows to other instances. */
 	if (packet->group_id == GROUP_LOCAL) {
-		/*
-		 * Replica-local requests generated while replica
-		 * was anonymous have a zero instance id. Just
-		 * skip all these rows.
-		 */
 		if (packet->replica_id == REPLICA_ID_NIL)
 			return;
-		packet->type = IPROTO_NOP;
-		packet->group_id = GROUP_DEFAULT;
-		packet->bodycnt = 0;
 	}
 	/*
 	 * We're feeding a WAL, thus responding to FINAL JOIN or SUBSCRIBE
