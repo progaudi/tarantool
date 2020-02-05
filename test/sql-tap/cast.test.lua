@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 test = require("sqltester")
-test:plan(79)
+test:plan(81)
 
 --!./tcltestrunner.lua
 -- 2005 June 25
@@ -869,6 +869,43 @@ test:do_execsql_test(
         -- <cast-5.1>
         184467440737.3
         -- </cast-5.1>
+    })
+
+--
+-- gh-4766: Make sure that a blob as part of a tuple can be cast
+-- to NUMBER, INTEGER and UNSIGNED. Prior to this patch, an error
+-- could appear due to the absence of '\0' at the end of the BLOB.
+--
+test:do_execsql_test(
+    "cast-6.1",
+    [[
+        CREATE TABLE t (a VARBINARY PRIMARY KEY);
+        INSERT INTO t VALUES (X'33'), (X'372020202020');
+        SELECT a, CAST(a AS NUMBER), CAST(a AS INTEGER), CAST(a AS UNSIGNED) FROM t;
+        DROP TABLE t;
+    ]], {
+        -- <cast-6.1>
+        '3', 3, 3, 3, '7     ', 7, 7, 7
+        -- </cast-6.1>
+    })
+
+--
+-- In some cases, the absence of '\0' could lead to an incorrect
+-- result. For example, in this case, part of the value is as
+-- follows: X'333300', which can be decoded as the number 33. Make
+-- sure this does not happen now.
+--
+test:do_execsql_test(
+    "cast-6.2",
+    [[
+        CREATE TABLE t (a VARBINARY PRIMARY KEY, i INT, u INT);
+        INSERT INTO t VALUES (X'33', 0x33, 0x00);
+        SELECT a, CAST(a AS NUMBER), CAST(a AS INTEGER), CAST(a AS UNSIGNED) FROM t;
+        DROP TABLE t;
+    ]], {
+        -- <cast-6.2>
+        '3', 3, 3, 3
+        -- </cast-6.2>
     })
 
 test:finish_test()
