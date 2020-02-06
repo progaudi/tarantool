@@ -169,6 +169,9 @@ function update_deb_packfile {
 function update_deb_metadata {
     packpath=$1
     packtype=$2
+    packfile=$3
+
+    file_exists=''
 
     if [ ! -f $packpath.saved ] ; then
         # get the latest Sources file from S3 either create empty file
@@ -185,38 +188,82 @@ function update_deb_metadata {
         # find the hash from the new Sources file
         hash=$(grep '^Checksums-Sha256:' -A3 $packpath | \
             tail -n 1 | awk '{print $1}')
+        # check if the file already exists in S3
+        if $aws ls "$bucket_path/$packfile" ; then
+            echo "WARNING: DSC file already exists in S3!"
+            file_exists=$bucket_path/$packfile
+        fi
         # search the new hash in the old Sources file from S3
         if grep " $hash .* .*$" $packpath.saved ; then
             echo "WARNING: DSC file already registered in S3!"
-            return
+            echo "File hash: $hash"
+            if [ "$file_exists" != "" ] ; then
+                return
+            fi
         fi
         # check if the DSC file already exists in old Sources file from S3
         file=$(grep '^Files:' -A3 $packpath | tail -n 1 | awk '{print $3}')
-        if [ "$force" == "" ] && grep " .* .* $file$" $packpath.saved ; then
-            echo "ERROR: the file already exists, but changed, set '-f' to overwrite it: $file"
-            echo "New hash: $hash"
-            # unlock the publishing
-            $rm_file $ws_lockfile
-            exit 1
+        if grep " .* .* $file$" $packpath.saved ; then
+            if [ "$force" == "" -a "$file_exists" != "" ] ; then
+                echo "ERROR: the file already exists, but changed, set '-f' to overwrite it: $file"
+                echo "New hash: $hash"
+                # unlock the publishing
+                $rm_file $ws_lockfile
+                exit 1
+            fi
+            hashes_old=$(grep '^Checksums-Sha256:' -A3 $packpath.saved | \
+                grep " .* .* $file" | awk '{print $1}')
+            # NOTE: for the single file name may exists more than one
+            #       entry in damaged file, to fix it all found entries
+            #       of this file need to be removed
+            # find and remove all package blocks for the bad hashes
+            for hash_rm in $hashes_old ; do
+                echo "Removing from $packpath.saved file old hash: $hash_rm"
+                pcregrep -Mi -v "(?s)Package: (\N+\n)+(?=^ ${hash_rm}).*?^$" \
+                    $packpath.saved >$packpath.saved_new
+                mv $packpath.saved_new $packpath.saved
+            done
         fi
         updated_dsc=1
     elif [ "$packtype" == "deb" ]; then
         # check if the DEB file already exists in old Packages file from S3
         # find the hash from the new Packages file
-        hash=$(grep '^SHA256: ' $packpath)
+        hash=$(grep '^SHA256: ' $packpath | awk '{print $2}')
+        # check if the file already exists in S3
+        if $aws ls "$bucket_path/$packfile" ; then
+            echo "WARNING: DEB file already exists in S3!"
+            file_exists=$bucket_path/$packfile
+        fi
         # search the new hash in the old Packages file from S3
         if grep "^SHA256: $hash" $packpath.saved ; then
             echo "WARNING: DEB file already registered in S3!"
-            return
+            echo "File hash: $hash"
+            if [ "$file_exists" != "" ] ; then
+                return
+            fi
         fi
         # check if the DEB file already exists in old Packages file from S3
         file=$(grep '^Filename:' $packpath | awk '{print $2}')
-        if [ "$force" == "" ] && grep "Filename: $file$" $packpath.saved ; then
-            echo "ERROR: the file already exists, but changed, set '-f' to overwrite it: $file"
-            echo "New hash: $hash"
-            # unlock the publishing
-            $rm_file $ws_lockfile
-            exit 1
+        if grep "Filename: $file$" $packpath.saved ; then
+            if [ "$force" == "" -a "$file_exists" != "" ] ; then
+                echo "ERROR: the file already exists, but changed, set '-f' to overwrite it: $file"
+                echo "New hash: $hash"
+                # unlock the publishing
+                $rm_file $ws_lockfile
+                exit 1
+            fi
+            hashes_old=$(grep -e "^Filename: " -e "^SHA256: " $packpath.saved | \
+                grep -A1 "$file" | grep "^SHA256: " | awk '{print $2}')
+            # NOTE: for the single file name may exists more than one
+            #       entry in damaged file, to fix it all found entries
+            #       of this file need to be removed
+            # find and remove all package blocks for the bad hashes
+            for hash_rm in $hashes_old ; do
+                echo "Removing from $packpath.saved file old hash: $hash_rm"
+                pcregrep -Mi -v "(?s)Package: (\N+\n)+(?=SHA256: ${hash_rm}).*?^$" \
+                    $packpath.saved >$packpath.saved_new
+                mv $packpath.saved_new $packpath.saved
+            done
         fi
         updated_deb=1
     fi
@@ -297,7 +344,7 @@ EOF
             for packages in dists/$loop_dist/$component/binary-*/Packages ; do
                 # copy Packages file to avoid of removing by the new DEB version
                 # update metadata 'Packages' files
-                update_deb_metadata $packages deb
+                update_deb_metadata $packages deb $locpackfile
                 [ "$updated_deb" == "1" ] || continue
                 updated_files=1
             done
@@ -316,7 +363,8 @@ EOF
             echo "Regenerated DSC file: $locpackfile"
             # copy Sources file to avoid of removing by the new DSC version
             # update metadata 'Sources' file
-            update_deb_metadata dists/$loop_dist/$component/source/Sources dsc
+            update_deb_metadata dists/$loop_dist/$component/source/Sources dsc \
+                $locpackfile
             [ "$updated_dsc" == "1" ] || continue
             updated_files=1
             # save the registered DSC file to S3
@@ -460,29 +508,70 @@ function pack_rpm {
     for hash in $(zcat repodata/other.xml.gz | grep "<package pkgid=" | \
         awk -F'"' '{print $2}') ; do
         updated_rpm=0
+        file_exists=''
         name=$(zcat repodata/other.xml.gz | grep "<package pkgid=\"$hash\"" | \
             awk -F'"' '{print $4}')
-        # search the new hash in the old meta file from S3
-        if zcat repodata.base/filelists.xml.gz | grep "pkgid=\"$hash\"" | \
-            grep "name=\"$name\"" ; then
-            echo "WARNING: $name file already registered in S3!"
-            echo "File hash: $hash"
-            continue
-        fi
-        updated_rpms=1
-        # check if the hashed file already exists in old meta file from S3
         file=$(zcat repodata/primary.xml.gz | \
             grep -e "<checksum type=" -e "<location href=" | \
             grep "$hash" -A1 | grep "<location href=" | \
             awk -F'"' '{print $2}')
         # check if the file already exists in S3
-        if [ "$force" == "" ] && zcat repodata.base/primary.xml.gz | \
+        if $aws ls "$bucket_path/$repopath/$file" ; then
+            echo "WARNING: DSC file already exists in S3!"
+            file_exists=$bucket_path/$repopath/$file
+        fi
+        # search the new hash in the old meta file from S3
+        if zcat repodata.base/filelists.xml.gz | grep "pkgid=\"$hash\"" | \
+            grep "name=\"$name\"" ; then
+            echo "WARNING: $name file already registered in S3!"
+            echo "File hash: $hash"
+            if [ "$file_exists" != "" ] ; then
+                continue
+            fi
+        fi
+        updated_rpms=1
+        # check if the hashed file already exists in old meta file from S3
+        if zcat repodata.base/primary.xml.gz | \
                 grep "<location href=\"$file\"" ; then
-            echo "ERROR: the file already exists, but changed, set '-f' to overwrite it: $file"
-            echo "New hash: $hash"
-            # unlock the publishing
-            $rm_file $ws_lockfile
-            exit 1
+            if [ "$force" == "" -a "$file_exists" != "" ] ; then
+                echo "ERROR: the file already exists, but changed, set '-f' to overwrite it: $file"
+                echo "New hash: $hash"
+                # unlock the publishing
+                $rm_file $ws_lockfile
+                exit 1
+            fi
+            hashes_old=$(zcat repodata.base/primary.xml.gz | \
+                grep -e "<checksum type=" -e "<location href=" | \
+                grep -B1 "$file" | grep "<checksum type=" | \
+                awk -F'>' '{print $2}' | sed 's#<.*##g')
+            # NOTE: for the single file name may exists more than one
+            #       entry in damaged file, to fix it all found entries
+            #       of this file need to be removed
+            for metafile in repodata.base/other \
+                            repodata.base/filelists \
+                            repodata.base/primary ; do
+                up_lines=''
+                if [ "$metafile" == "repodata.base/primary" ]; then
+                    up_full_lines='(\N+\n)*'
+                fi
+                packs_rm=0
+                # find and remove all <package> tags for the bad hashes
+                for hash_rm in $hashes_old ; do
+                    echo "Removing from ${metafile}.xml.gz file old hash: $hash_rm"
+                    zcat ${metafile}.xml.gz | \
+                        pcregrep -Mi -v "(?s)<package ${up_full_lines}\N+(?=${hash_rm}).*?package>" | \
+                        gzip - >${metafile}_new.xml.gz
+                    mv ${metafile}_new.xml.gz ${metafile}.xml.gz
+                    packs_rm=$(($packs_rm+1))
+                done
+                # reduce number of packages in metafile counter
+                gunzip ${metafile}.xml.gz
+                packs=$(($(grep " packages=" ${metafile}.xml | \
+                    sed 's#.* packages="\([0-9]*\)".*#\1#g')-${packs_rm}))
+                sed "s# packages=\"[0-9]*\"# packages=\"${packs}\"#g" \
+                    -i ${metafile}.xml
+                gzip ${metafile}.xml
+            done
         fi
     done
 
