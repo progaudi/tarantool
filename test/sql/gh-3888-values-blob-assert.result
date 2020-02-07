@@ -1,3 +1,4 @@
+-- test-run result file version 2
 -- sql: assertion fault on VALUES #3888
 --
 -- Make sure that tokens representing values of integer, float,
@@ -5,79 +6,87 @@
 -- keywords of the same names.
 --
 test_run = require('test_run').new()
----
-...
+ | ---
+ | ...
 engine = test_run:get_cfg('engine')
----
-...
+ | ---
+ | ...
 _ = box.space._session_settings:update('sql_default_engine', {{'=', 2, engine}})
----
-...
+ | ---
+ | ...
+
 -- check 'VALUES' against typedef keywords (should fail)
 box.execute('VALUES(scalar)')
----
-- null
-- Syntax error at line 1 near 'scalar'
-...
+ | ---
+ | - null
+ | - Syntax error at line 1 near 'scalar'
+ | ...
 box.execute('VALUES(float)')
----
-- null
-- Syntax error at line 1 near 'float'
-...
+ | ---
+ | - null
+ | - Syntax error at line 1 near 'float'
+ | ...
+
 -- check 'SELECT' against typedef keywords (should fail)
 box.execute('SELECT scalar')
----
-- null
-- Syntax error at line 1 near 'scalar'
-...
+ | ---
+ | - null
+ | - Syntax error at line 1 near 'scalar'
+ | ...
 box.execute('SELECT float')
----
-- null
-- Syntax error at line 1 near 'float'
-...
+ | ---
+ | - null
+ | - Syntax error at line 1 near 'float'
+ | ...
+
 -- check 'VALUES' against ID (should fail)
 box.execute('VALUES(TheColumnName)')
----
-- null
-- Can’t resolve field 'THECOLUMNNAME'
-...
+ | ---
+ | - null
+ | - Can’t resolve field 'THECOLUMNNAME'
+ | ...
+
 -- check 'SELECT' against ID (should fail)
 box.execute('SELECT TheColumnName')
----
-- null
-- Can’t resolve field 'THECOLUMNNAME'
-...
+ | ---
+ | - null
+ | - Can’t resolve field 'THECOLUMNNAME'
+ | ...
+
 -- check 'VALUES' well-formed expression  (returns value)
 box.execute('VALUES(-0.5e-2)')
----
-- metadata:
-  - name: column1
-    type: double
-  rows:
-  - [-0.005]
-...
+ | ---
+ | - metadata:
+ |   - name: _COLUMN_1
+ |     type: double
+ |   rows:
+ |   - [-0.005]
+ | ...
 box.execute('SELECT X\'507265766564\'')
----
-- metadata:
-  - name: X'507265766564'
-    type: varbinary
-  rows:
-  - ['Preved']
-...
+ | ---
+ | - metadata:
+ |   - name: _COLUMN_1
+ |     type: varbinary
+ |   rows:
+ |   - ['Preved']
+ | ...
+
 -- check 'SELECT' well-formed expression  (return value)
 box.execute('SELECT 3.14')
----
-- metadata:
-  - name: '3.14'
-    type: double
-  rows:
-  - [3.14]
-...
+ | ---
+ | - metadata:
+ |   - name: _COLUMN_1
+ |     type: double
+ |   rows:
+ |   - [3.14]
+ | ...
 box.execute('SELECT X\'4D6564766564\'')
----
-- metadata:
-  - name: X'4D6564766564'
-    type: varbinary
-  rows:
-  - ['Medved']
-...
+ | ---
+ | - metadata:
+ |   - name: _COLUMN_1
+ |     type: varbinary
+ |   rows:
+ |   - ['Medved']
+ | ...
+
+

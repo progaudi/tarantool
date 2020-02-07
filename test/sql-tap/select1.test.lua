@@ -1032,7 +1032,7 @@ test:do_catchsql2_test(
         SELECT f1+F2 FROM test1 ORDER BY f2
     ]], {
         -- <select1-6.4a>
-        0, {"f1+F2", 33, "f1+F2", 77}
+        0, {"_COLUMN_1",33,"_COLUMN_1",77}
         -- </select1-6.4a>
     })
 
@@ -1042,7 +1042,7 @@ test:do_catchsql2_test(
         SELECT test1.f1+F2 FROM test1 ORDER BY f2
     ]], {
         -- <select1-6.5>
-        0, {"test1.f1+F2", 33, "test1.f1+F2", 77}
+        0, {"_COLUMN_1",33,"_COLUMN_1",77}
         -- </select1-6.5>
     })
 
@@ -1059,7 +1059,7 @@ test:do_test(
         return table.insert(v,msg) or v
     end, {
         -- <select1-6.5.1>
-        0, {'test1.f1+F2', 33, 'test1.f1+F2', 77}
+        0, {"_COLUMN_1",33,"_COLUMN_1",77}
         -- </select1-6.5.1>
     })
 
@@ -1068,7 +1068,7 @@ test:do_catchsql2_test(
     [[SELECT test1.f1+F2, t1 FROM test1, test2 
          ORDER BY f2]], {
         -- <select1-6.6>
-        0, {"test1.f1+F2", 33, "T1", "abc", "test1.f1+F2", 77, "T1", "abc"}
+        0, {"_COLUMN_1",33,"T1","abc","_COLUMN_1",77,"T1","abc"}
         -- </select1-6.6>
     })
 
@@ -1161,7 +1161,7 @@ test:do_test(
         ]]
     end, {
         -- <select1-6.9.5>
-        "123.45", 123.45
+        "_COLUMN_1",123.45
         -- </select1-6.9.5>
     })
 
@@ -1850,7 +1850,7 @@ test:do_execsql2_test(
         SELECT 1+2+3
     ]], {
         -- <select1-12.1>
-        "1+2+3", 6
+        "_COLUMN_1",6
         -- </select1-12.1>
     })
 
@@ -1860,7 +1860,7 @@ test:do_execsql2_test(
         SELECT 1,'hello',2
     ]], {
         -- <select1-12.2>
-        '1', 1, "'hello'", "hello", '2', 2
+        "_COLUMN_1",1,"_COLUMN_2","hello","_COLUMN_3",2
         -- </select1-12.2>
     })
 

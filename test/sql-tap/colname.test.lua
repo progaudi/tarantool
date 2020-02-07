@@ -94,7 +94,7 @@ test:do_execsql2_test(
         SELECT +tabc.a, -tabc.b, tabc.c, * FROM tabc
     ]], {
         -- <colname-2.3>
-        "+tabc.a",1,"-tabc.b",-2,"C",3,"A",1,"B",2,"C",3
+        "_COLUMN_1",1,"_COLUMN_2",-2,"C",3,"A",1,"B",2,"C",3
         -- </colname-2.3>
     })
 
@@ -194,7 +194,7 @@ test:do_execsql2_test(
         SELECT +tabc.a, -tabc.b, tabc.c FROM tabc
     ]], {
         -- <colname-3.3>
-        "+tabc.a", 1, "-tabc.b", -2, "C", 3
+        "_COLUMN_1",1,"_COLUMN_2",-2,"C",3
         -- </colname-3.3>
     })
 
@@ -314,7 +314,7 @@ test:do_execsql2_test(
         SELECT +tabc.a, -tabc.b, tabc.c FROM tabc
     ]], {
         -- <colname-4.3>
-        "+tabc.a", 1, "-tabc.b", -2, "TABC.C", 3
+        "_COLUMN_1",1,"_COLUMN_2",-2,"TABC.C",3
         -- </colname-4.3>
     })
 

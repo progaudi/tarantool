@@ -4510,4 +4510,17 @@ int
 sql_fieldno_by_name(struct Parse *parse_context, struct Expr *field_name,
 		    uint32_t *fieldno);
 
+/**
+ * Return a string of the form "_COLUMN_N", where N is @a number.
+ *
+ * @param number Number of column.
+ *
+ * @retval string success.
+ */
+static inline char *
+sql_generate_column_name(uint32_t number)
+{
+	return (char *) tt_sprintf("_COLUMN_%d", number);
+}
+
 #endif				/* sqlINT_H */

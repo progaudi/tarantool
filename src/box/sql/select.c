@@ -1852,12 +1852,10 @@ generate_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 			const char *z = NULL;
 			if (colname != NULL)
 				z = colname;
-			else if (span != NULL)
-				z = span;
 			else
-				z = tt_sprintf("column%d", i + 1);
+				z = sql_generate_column_name(i + 1);
 			vdbe_metadata_set_col_name(v, i, z);
-			if (is_full_meta && colname != NULL)
+			if (is_full_meta)
 				vdbe_metadata_set_col_span(v, i, span);
 		}
 	}
@@ -1952,7 +1950,7 @@ sqlColumnsFromExprList(Parse * parse, ExprList * expr_list,
 			}
 		}
 		if (zName == NULL)
-			zName = "_auto_field_";
+			zName = sql_generate_column_name(i + 1);
 		zName = sqlMPrintf(db, "%s", zName);
 
 		/* Make sure the column name is unique.  If the name is not unique,
