@@ -411,6 +411,25 @@ box_check_uri(const char *source, const char *option_name)
 	}
 }
 
+/*
+ * Check whether new replication configuration has the same sources as
+ * current one.
+ */
+static void
+box_check_duplication(const char *source, const char *option_name)
+{
+	if (source == NULL)
+		return;
+	replicaset_foreach(replica) {
+		if (replica->applier != NULL) {
+			if (strcmp(source, replica->applier->source) == 0) {
+				tnt_raise(ClientError, ER_CFG, option_name,
+					  "duplicated replication source, already in use");
+			}
+		}
+	}
+}
+
 static void
 box_check_replication(void)
 {
@@ -418,6 +437,7 @@ box_check_replication(void)
 	for (int i = 0; i < count; i++) {
 		const char *source = cfg_getarr_elem("replication", i);
 		box_check_uri(source, "replication");
+		box_check_duplication(source, "replication");
 	}
 }
 

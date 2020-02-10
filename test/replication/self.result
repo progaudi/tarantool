@@ -1,0 +1,85 @@
+-- test-run result file version 2
+test_run = require('test_run').new()
+ | ---
+ | ...
+
+--box.schema.user.revoke('guest', 'replication')
+box.schema.user.grant('guest', 'replication')
+ | ---
+ | ...
+
+--
+-- gh-4669 any change in box.cfg replication list resets all connections
+--
+test_run:cmd('create server replica with rpl_master=default, script="replication/replica_self.lua"')
+ | ---
+ | - true
+ | ...
+test_run:cmd("start server replica")
+ | ---
+ | - true
+ | ...
+test_run:cmd("switch replica")
+ | ---
+ | - true
+ | ...
+replication = box.cfg.replication
+ | ---
+ | ...
+replication
+ | ---
+ | - - /Users/olga/Work/2tarantool/tarantool/test/var/001_replication/master.socket-iproto
+ |   - /Users/olga/Work/2tarantool/tarantool/test/var/001_replication/replica_self.socket-iproto
+ | ...
+replication_change = {}
+ | ---
+ | ...
+replication_change[1] = replication[2]
+ | ---
+ | ...
+replication_change[2] = replication[1]
+ | ---
+ | ...
+replication_change
+ | ---
+ | - - /Users/olga/Work/2tarantool/tarantool/test/var/001_replication/replica_self.socket-iproto
+ |   - /Users/olga/Work/2tarantool/tarantool/test/var/001_replication/master.socket-iproto
+ | ...
+box.cfg{replication = replication_change}
+ | ---
+ | - error: 'Incorrect value for option ''replication'': duplicated replication source,
+ |     it is already in use'
+ | ...
+
+test_run:cmd("switch default")
+ | ---
+ | - true
+ | ...
+--search log for error with duplicated connection from relay
+box.cfg.listen
+ | ---
+ | - /Users/olga/Work/2tarantool/tarantool/test/var/001_replication/master.socket-iproto
+ | ...
+test_run:grep_log('replica', 'duplicate connection') ~= nil
+ | ---
+ | - false
+ | ...
+
+test_run:cmd("stop server replica")
+ | ---
+ | - true
+ | ...
+test_run:cmd("cleanup server replica")
+ | ---
+ | - true
+ | ...
+test_run:cmd("delete server replica")
+ | ---
+ | - true
+ | ...
+test_run:cleanup_cluster()
+ | ---
+ | ...
+box.schema.user.revoke('guest', 'replication')
+ | ---
+ | ...
