@@ -68,18 +68,7 @@ hint_cmp(hint_t hint_a, hint_t hint_b)
 inline __attribute__((always_inline)) int
 mp_compare_uint(const char **data_a, const char **data_b);
 
-enum mp_class {
-	MP_CLASS_NIL = 0,
-	MP_CLASS_BOOL,
-	MP_CLASS_NUMBER,
-	MP_CLASS_STR,
-	MP_CLASS_BIN,
-	MP_CLASS_ARRAY,
-	MP_CLASS_MAP,
-	mp_class_max,
-};
-
-static enum mp_class mp_classes[] = {
+enum mp_class mp_classes[] = {
 	/* .MP_NIL     = */ MP_CLASS_NIL,
 	/* .MP_UINT    = */ MP_CLASS_NUMBER,
 	/* .MP_INT     = */ MP_CLASS_NUMBER,
@@ -98,7 +87,7 @@ static enum mp_class mp_ext_classes[] = {
 	/* .MP_DECIMAL		 = */ MP_CLASS_NUMBER,
 };
 
-static enum mp_class
+enum mp_class
 mp_classof(enum mp_type type)
 {
 	return mp_classes[type];

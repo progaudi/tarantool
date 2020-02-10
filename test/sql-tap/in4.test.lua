@@ -590,7 +590,7 @@ test:do_execsql_test(
     [[
         CREATE TABLE t4b(a TEXT, b NUMBER, c  INT PRIMARY KEY);
         INSERT INTO t4b VALUES('1.0',1,4);
-        SELECT c FROM t4b WHERE a=b;
+        SELECT c FROM t4b WHERE CAST(a AS NUMBER) = b;
     ]], {
         -- <in4-4.11>
         4
@@ -600,7 +600,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-4.12",
     [[
-        SELECT c FROM t4b WHERE b=a;
+        SELECT c FROM t4b WHERE b=CAST(a AS NUMBER);
     ]], {
         -- <in4-4.12>
         4
@@ -610,7 +610,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-4.13",
     [[
-        SELECT c FROM t4b WHERE +a=b;
+        SELECT c FROM t4b WHERE +CAST(a AS NUMBER)=b;
     ]], {
         -- <in4-4.13>
         4
@@ -620,7 +620,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-4.14",
     [[
-        SELECT c FROM t4b WHERE a=+b;
+        SELECT c FROM t4b WHERE CAST(a AS NUMBER)=+b;
     ]], {
         -- <in4-4.14>
         4
@@ -630,7 +630,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-4.15",
     [[
-        SELECT c FROM t4b WHERE +b=a;
+        SELECT c FROM t4b WHERE +b=CAST(a AS NUMBER);
     ]], {
         -- <in4-4.15>
         4
@@ -640,7 +640,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-4.16",
     [[
-        SELECT c FROM t4b WHERE b=+a;
+        SELECT c FROM t4b WHERE b=+CAST(a AS NUMBER);
     ]], {
         -- <in4-4.16>
         4
@@ -650,7 +650,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-4.17",
     [[
-        SELECT c FROM t4b WHERE a IN (b);
+        SELECT c FROM t4b WHERE CAST(a AS NUMBER) IN (b);
     ]], {
         -- <in4-4.17>
         4
@@ -660,7 +660,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-4.18",
     [[
-        SELECT c FROM t4b WHERE b IN (a);
+        SELECT c FROM t4b WHERE b IN (CAST(a AS NUMBER));
     ]], {
         -- <in4-4.18>
         4
@@ -670,7 +670,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-4.19",
     [[
-        SELECT c FROM t4b WHERE +b IN (a);
+        SELECT c FROM t4b WHERE +b IN (CAST(a AS NUMBER));
     ]], {
         -- <in4-4.19>
         4

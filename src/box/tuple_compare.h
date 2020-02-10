@@ -31,10 +31,25 @@
  * SUCH DAMAGE.
  */
 #include <stdint.h>
+#include <msgpuck.h>
 
 #if defined(__cplusplus)
 extern "C" {
 #endif /* defined(__cplusplus) */
+
+enum mp_class {
+	MP_CLASS_NIL = 0,
+	MP_CLASS_BOOL,
+	MP_CLASS_NUMBER,
+	MP_CLASS_STR,
+	MP_CLASS_BIN,
+	MP_CLASS_ARRAY,
+	MP_CLASS_MAP,
+	mp_class_max,
+};
+
+enum mp_class
+mp_classof(enum mp_type type);
 
 struct key_def;
 

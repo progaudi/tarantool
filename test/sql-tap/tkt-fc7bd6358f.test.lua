@@ -64,14 +64,14 @@ local froms = {
     "FROM t t1, t t2, i",
 }
 local wheres = {
-    "WHERE t1.textid=i.intid AND t1.textid=t2.textid",
-    "WHERE i.intid=t1.textid AND t1.textid=t2.textid",
-    "WHERE t1.textid=i.intid AND i.intid=t2.textid",
-    "WHERE t1.textid=i.intid AND t2.textid=i.intid",
-    "WHERE i.intid=t1.textid AND i.intid=t2.textid",
-    "WHERE i.intid=t1.textid AND t2.textid=i.intid",
-    "WHERE t1.textid=t2.textid AND i.intid=t2.textid",
-    "WHERE t1.textid=t2.textid AND t2.textid=i.intid",
+    "WHERE CAST(t1.textid AS INTEGER)=i.intid AND t1.textid=t2.textid",
+    "WHERE i.intid=CAST(t1.textid AS INTEGER) AND t1.textid=t2.textid",
+    "WHERE CAST(t1.textid AS INTEGER)=i.intid AND i.intid=CAST(t2.textid AS INTEGER)",
+    "WHERE CAST(t1.textid AS INTEGER)=i.intid AND CAST(t2.textid AS INTEGER)=i.intid",
+    "WHERE i.intid=CAST(t1.textid AS INTEGER) AND i.intid=CAST(t2.textid AS INTEGER)",
+    "WHERE i.intid=CAST(t1.textid AS INTEGER) AND CAST(t2.textid AS INTEGER)=i.intid",
+    "WHERE t1.textid=t2.textid AND i.intid=CAST(t2.textid AS INTEGER)",
+    "WHERE t1.textid=t2.textid AND CAST(t2.textid AS INTEGER)=i.intid",
 }
 for a, from in ipairs(froms) do
     for b, where in ipairs(wheres) do

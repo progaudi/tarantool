@@ -637,11 +637,7 @@ test:do_test(
                 INSERT INTO t2249b VALUES(123);
             ]]
             return queryplan([[
-    -- Because a is type TEXT and b is type INTEGER, both a and b
-    -- will attempt to convert to NUMERIC before the comparison.
-    -- They will thus compare equal.
-    --
-    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE a=b;
+    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE CAST(a AS NUMBER)=b;
   ]])
         end, {
             -- <where2-6.7>
@@ -653,9 +649,7 @@ test:do_test(
         "where2-6.9",
         function()
             return queryplan([[
-    -- The + operator doesn't affect RHS.
-    --
-    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE a=+b;
+    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE CAST(a AS NUMBER)=+b;
   ]])
         end, {
             -- <where2-6.9>
@@ -668,7 +662,7 @@ test:do_test(
         function()
             -- The same thing but with the expression flipped around.
             return queryplan([[
-    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE +b=a
+    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE +b=CAST(a AS NUMBER)
   ]])
         end, {
             -- <where2-6.9.2>
@@ -680,7 +674,7 @@ test:do_test(
         "where2-6.10",
         function()
             return queryplan([[
-    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE +a=+b;
+    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE +CAST(a AS NUMBER)=+b;
   ]])
         end, {
             -- <where2-6.10>
@@ -694,7 +688,7 @@ test:do_test(
             -- This will not attempt the OR optimization because of the a=b
             -- comparison.
             return queryplan([[
-    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE a=b OR a='hello';
+    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE CAST(a AS NUMBER)=b OR a='hello';
   ]])
         end, {
             -- <where2-6.11>
@@ -707,7 +701,7 @@ test:do_test(
         function()
             -- Permutations of the expression terms.
             return queryplan([[
-    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE b=a OR a='hello';
+    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE b=CAST(a AS NUMBER) OR a='hello';
   ]])
         end, {
             -- <where2-6.11.2>
@@ -720,7 +714,7 @@ test:do_test(
         function()
             -- Permutations of the expression terms.
             return queryplan([[
-    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE 'hello'=a OR b=a;
+    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE 'hello'=a OR b=CAST(a AS NUMBER);
   ]])
         end, {
             -- <where2-6.11.3>
@@ -733,7 +727,7 @@ test:do_test(
         function()
             -- Permutations of the expression terms.
             return queryplan([[
-    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE a='hello' OR b=a;
+    SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE a='hello' OR b=CAST(a AS NUMBER);
   ]])
         end, {
             -- <where2-6.11.4>
@@ -750,7 +744,7 @@ test:do_test(
         "where2-6.12",
         function()
             return queryplan([[
-      SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE a=+b OR a='hello';
+      SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE CAST(a AS NUMBER)=+b OR a='hello';
     ]])
         end, {
             -- <where2-6.12>
@@ -762,7 +756,7 @@ test:do_test(
         "where2-6.12.2",
         function()
             return queryplan([[
-      SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE a='hello' OR +b=a;
+      SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE a='hello' OR +b=CAST(a AS NUMBER);
     ]])
         end, {
             -- <where2-6.12.2>
@@ -774,7 +768,7 @@ test:do_test(
         "where2-6.12.3",
         function()
             return queryplan([[
-      SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE +b=a OR a='hello';
+      SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE +b=CAST(a AS NUMBER) OR a='hello';
     ]])
         end, {
             -- <where2-6.12.3>
@@ -788,7 +782,7 @@ test:do_test(
             -- The addition of +a on the second term disabled the OR optimization.
             -- But we should still get the same empty-set result as in where2-6.9.
             return queryplan([[
-      SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE a=+b OR +a='hello';
+      SELECT b,a FROM t2249b CROSS JOIN t2249a WHERE CAST(a AS NUMBER)=+b OR +a='hello';
     ]])
         end, {
             -- <where2-6.13>

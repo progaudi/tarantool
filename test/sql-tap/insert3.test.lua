@@ -59,8 +59,8 @@ test:do_execsql_test(
     [[
             CREATE TABLE log2(rowid INTEGER PRIMARY KEY AUTOINCREMENT, x TEXT UNIQUE,y INT );
             CREATE TRIGGER r2 BEFORE INSERT ON t1 FOR EACH ROW BEGIN
-              UPDATE log2 SET y=y+1 WHERE x=new.b;
-              INSERT OR IGNORE INTO log2(x, y) VALUES(new.b,1);
+              UPDATE log2 SET y = y+1 WHERE CAST(x AS NUMBER) = new.b;
+              INSERT OR IGNORE INTO log2(x, y) VALUES(CAST(new.b AS STRING),1);
             END;
             INSERT INTO t1(a, b) VALUES('hi', 453);
             SELECT x,y FROM log ORDER BY x;
@@ -84,8 +84,7 @@ test:do_execsql_test(
     "insert3-1.4.1",
     [[
             INSERT INTO t1(a,b) SELECT a,b FROM t1;
-            SELECT 'a:', x, y FROM log UNION ALL
-                SELECT 'b:', x, y FROM log2 ORDER BY x;
+            SELECT 'a:', x, y FROM log UNION ALL SELECT 'b:', x, y FROM log2 ORDER BY x;
     ]], {
         -- <insert3-1.4.1>
         "b:","1",1,"b:","11",1,"b:","15",1,"b:","453",2,"a:","5",4,"b:","5",1,"a:","hello",4,"a:","hi",2

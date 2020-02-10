@@ -882,7 +882,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "intpkey-14.5",
     [[
-        SELECT * FROM t3 WHERE a<c;
+        SELECT * FROM t3 WHERE CAST(a AS STRING) < c;
     ]], {
         -- <intpkey-14.5>
         1, 1, "one"
@@ -892,7 +892,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "intpkey-14.6",
     [[
-        SELECT * FROM t3 WHERE a=c;
+        SELECT * FROM t3 WHERE CAST(a AS STRING) = c;
     ]], {
         -- <intpkey-14.6>
         2, 2, "2", 3, 3, "3"

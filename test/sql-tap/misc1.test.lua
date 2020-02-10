@@ -88,7 +88,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "misc1-1.4",
     [[
-        SELECT x75 FROM manycol WHERE x50=350
+        SELECT x75 FROM manycol WHERE x50='350'
     ]], {
         -- <misc1-1.4>
         "375"
@@ -98,7 +98,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "misc1-1.5",
     [[
-        SELECT x50 FROM manycol WHERE x99=599
+        SELECT x50 FROM manycol WHERE x99='599'
     ]], {
         -- <misc1-1.5>
         "550"
@@ -109,7 +109,7 @@ test:do_test(
     "misc1-1.6",
     function()
         test:execsql("CREATE INDEX manycol_idx1 ON manycol(x99)")
-        return test:execsql("SELECT x50 FROM manycol WHERE x99=899")
+        return test:execsql("SELECT x50 FROM manycol WHERE x99='899'")
     end, {
         -- <misc1-1.6>
         "850"
@@ -129,7 +129,7 @@ test:do_execsql_test(
 test:do_test(
     "misc1-1.8",
     function()
-        test:execsql("DELETE FROM manycol WHERE x98=1234")
+        test:execsql("DELETE FROM manycol WHERE x98='1234'")
         return test:execsql("SELECT count(*) FROM manycol")
     end, {
         -- <misc1-1.8>
@@ -140,7 +140,7 @@ test:do_test(
 test:do_test(
     "misc1-1.9",
     function()
-        test:execsql("DELETE FROM manycol WHERE x98=998")
+        test:execsql("DELETE FROM manycol WHERE x98='998'")
         return test:execsql("SELECT count(*) FROM manycol")
     end, {
         -- <misc1-1.9>
@@ -151,7 +151,7 @@ test:do_test(
 test:do_test(
     "misc1-1.10",
     function()
-        test:execsql("DELETE FROM manycol WHERE x99=500")
+        test:execsql("DELETE FROM manycol WHERE x99='500'")
         return test:execsql("SELECT count(*) FROM manycol")
     end, {
         -- <misc1-1.10>
@@ -162,7 +162,7 @@ test:do_test(
 test:do_test(
     "misc1-1.11",
     function()
-        test:execsql("DELETE FROM manycol WHERE x99=599")
+        test:execsql("DELETE FROM manycol WHERE x99='599'")
         return test:execsql("SELECT count(*) FROM manycol")
     end, {
         -- <misc1-1.11>
@@ -479,9 +479,9 @@ local where = ""
 test:do_test(
     "misc1-10.1",
     function()
-        where = "WHERE x0>=0"
+        where = "WHERE x0>='0'"
         for i = 1, 99, 1 do
-            where = where .. " AND x"..i.."<>0"
+            where = where .. " AND x"..i.."<>'0'"
         end
         return test:catchsql("SELECT count(*) FROM manycol "..where.."")
     end, {
@@ -496,7 +496,7 @@ test:do_test(
 test:do_test(
     "misc1-10.3",
     function()
-        where = string.gsub(where,"x0>=0", "x0=0")
+        where = string.gsub(where,"x0>='0'", "x0='0'")
         return test:catchsql("DELETE FROM manycol "..where.."")
     end, {
         -- <misc1-10.3>
@@ -520,7 +520,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "misc1-10.6",
     [[
-        SELECT x1 FROM manycol WHERE x0=100
+        SELECT x1 FROM manycol WHERE x0='100'
     ]], {
         -- <misc1-10.6>
         "101"
@@ -530,7 +530,7 @@ test:do_execsql_test(
 test:do_test(
     "misc1-10.7",
     function()
-        where = string.gsub(where, "x0=0", "x0=100")
+        where = string.gsub(where, "x0='0'", "x0='100'")
         return test:catchsql("UPDATE manycol SET x1=x1+1 "..where.."")
     end, {
         -- <misc1-10.7>
@@ -541,7 +541,7 @@ test:do_test(
 test:do_execsql_test(
     "misc1-10.8",
     [[
-        SELECT x1 FROM manycol WHERE x0=100
+        SELECT x1 FROM manycol WHERE x0='100'
     ]], {
         -- <misc1-10.8>
         "102"
@@ -563,7 +563,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "misc1-10.10",
     [[
-        SELECT x1 FROM manycol WHERE x0=100
+        SELECT x1 FROM manycol WHERE x0='100'
     ]], {
         -- <misc1-10.10>
         "103"
@@ -622,7 +622,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "misc1-12.2",
     [[
-        SELECT '0'==0.0
+        SELECT CAST('0' AS NUMBER)==0.0
     ]], {
         -- <misc1-12.2>
         true

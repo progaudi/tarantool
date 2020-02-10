@@ -633,16 +633,13 @@ test:do_execsql_test(
         -- </in-11.1>
     })
 
-test:do_test(
+test:do_catchsql_test(
     "in-11.2",
-    function()
-        -- The '2' should be coerced into 2 because t6.b is NUMERIC
-        return test:execsql [[
-            SELECT * FROM t6 WHERE b IN ('2');
-        ]]
-    end, {
+    [[
+        SELECT * FROM t6 WHERE b IN ('2');
+    ]], {
         -- <in-11.2>
-        1, 2
+        1, "Type mismatch: can not convert text to real"
         -- </in-11.2>
     })
 

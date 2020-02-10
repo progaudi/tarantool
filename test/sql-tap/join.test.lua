@@ -1015,7 +1015,7 @@ test:do_test(
             DROP TABLE IF EXISTS t2;
         ]]
         return test:execsql [[
-            CREATE TABLE t1(a TEXT primary key, b TEXT);
+            CREATE TABLE t1(a TEXT primary key, b INTEGER);
             CREATE TABLE t2(b INTEGER primary key, a TEXT);
             INSERT INTO t1 VALUES('one', '1.0');
             INSERT INTO t1 VALUES('two', '2');
@@ -1034,7 +1034,7 @@ test:do_execsql_test(
         SELECT * FROM t1 NATURAL JOIN t2 
     ]], {
         -- <join-11.9>
-        "one", "1.0", "two", "2"
+        "one", 1.0, "two", 2
         -- </join-11.9>
     })
 

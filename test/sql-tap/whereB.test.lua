@@ -37,7 +37,7 @@ test:do_execsql_test(
         CREATE INDEX t2b ON t2(b);
         INSERT INTO t2 VALUES(2,'99');
 
-        SELECT x, a, y=b FROM t1, t2 ORDER BY +x, +a;
+        SELECT x, a, y=CAST(b AS NUMBER) FROM t1, t2 ORDER BY +x, +a;
     ]],
     {
     -- <whereB-1.1>
@@ -48,7 +48,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "whereB-1.2",
     [[
-        SELECT x, a, y=b FROM t1, t2 WHERE y=b;
+        SELECT x, a, y=CAST(b AS NUMBER) FROM t1, t2 WHERE y=CAST(b AS NUMBER);
     ]],
     {
     -- <whereB-1.2>
@@ -59,7 +59,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "whereB-1.3",
     [[
-        SELECT x, a, y=b FROM t1, t2 WHERE b=y;
+        SELECT x, a, y=CAST(b AS NUMBER) FROM t1, t2 WHERE CAST(b AS NUMBER)=y;
     ]],
     {
     -- <whereB-1.3>
@@ -70,7 +70,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "whereB-1.4",
     [[
-        SELECT x, a, y=b FROM t1, t2 WHERE +y=+b;
+        SELECT x, a, y=CAST(b AS NUMBER) FROM t1, t2 WHERE +y=+CAST(b AS NUMBER);
     ]],
     {
     -- <whereB-1.4>
@@ -82,7 +82,7 @@ test:do_execsql_test(
     "whereB-1.100",
     [[
         DROP INDEX t2b ON t2;
-        SELECT x, a, y=b FROM t1, t2 WHERE y=b;
+        SELECT x, a, y=CAST(b AS NUMBER) FROM t1, t2 WHERE y=CAST(b AS NUMBER);
     ]],
     {
     -- <whereB-1.100>
@@ -93,7 +93,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "whereB-1.101",
     [[
-        SELECT x, a, y=b FROM t1, t2 WHERE b=y;
+        SELECT x, a, y=CAST(b AS NUMBER) FROM t1, t2 WHERE CAST(b AS NUMBER)=y;
     ]],
     {
     -- <whereB-1.101>
@@ -104,7 +104,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "whereB-1.102",
     [[
-        SELECT x, a, y=b FROM t1, t2 WHERE +y=+b;
+        SELECT x, a, y=CAST(b AS NUMBER) FROM t1, t2 WHERE +y=+CAST(b AS NUMBER);
     ]],
     {
     -- <whereB-1.102>
@@ -120,7 +120,7 @@ test:do_execsql_test(
 -- These values are not equal and because neither affinity is NUMERIC
 -- no type conversion occurs.
 --
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-2.1",
     [[
         DROP TABLE t1;
@@ -137,7 +137,7 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-2.1>
-    1, 2, false
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-2.1>
     })
 
@@ -163,18 +163,18 @@ test:do_execsql_test(
     -- </whereB-2.3>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-2.4",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE +y=+b;
     ]],
     {
     -- <whereB-2.4>
-    
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-2.4>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-2.100",
     [[
         DROP INDEX t2b ON t2;
@@ -182,29 +182,29 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-2.100>
-    
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-2.100>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-2.101",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-2.101>
-    
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-2.101>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-2.102",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE +y=+b;
     ]],
     {
     -- <whereB-2.102>
-    
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-2.102>
     })
 
@@ -216,7 +216,7 @@ test:do_execsql_test(
 -- These values are not equal and because neither affinity is NUMERIC
 -- no type conversion occurs.
 --
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-3.1",
     [[
         DROP TABLE t1;
@@ -233,7 +233,7 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-3.1>
-    1, 2, false
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-3.1>
     })
 
@@ -259,18 +259,18 @@ test:do_execsql_test(
     -- </whereB-3.3>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-3.4",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE +y=+b;
     ]],
     {
     -- <whereB-3.4>
-    
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-3.4>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-3.100",
     [[
         DROP INDEX t2b ON t2;
@@ -278,29 +278,29 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-3.100>
-    
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-3.100>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-3.101",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-3.101>
-    
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-3.101>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-3.102",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE +y=+b;
     ]],
     {
     -- <whereB-3.102>
-    
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-3.102>
     })
 
@@ -312,7 +312,7 @@ test:do_execsql_test(
 -- Because t2.b has a numeric affinity, type conversion should occur
 -- and the two fields should be equal.
 --
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-4.1",
     [[
         DROP TABLE IF EXISTS t1;
@@ -329,33 +329,33 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-4.1>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-4.1>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-4.2",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE y=b;
     ]],
     {
     -- <whereB-4.2>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-4.2>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-4.3",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-4.3>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-4.3>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-4.4",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -364,11 +364,11 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-4.4>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-4.4>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-4.100",
     [[
         DROP INDEX t2b ON t2;
@@ -376,22 +376,22 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-4.100>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-4.100>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-4.101",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-4.101>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-4.101>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-4.102",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -400,7 +400,7 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-4.102>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-4.102>
     })
 
@@ -412,7 +412,7 @@ test:do_execsql_test(
 -- Because t2.b has a numeric affinity, type conversion should occur
 -- and the two fields should be equal.
 --
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-5.1",
     [[
         DROP TABLE t1;
@@ -429,33 +429,33 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-5.1>
-    1, 2, true
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-5.1>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-5.2",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE y=b;
     ]],
     {
     -- <whereB-5.2>
-    1, 2, true
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-5.2>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-5.3",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-5.3>
-    1, 2, true
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-5.3>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-5.4",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -464,11 +464,11 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-5.4>
-    1, 2, true
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-5.4>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-5.100",
     [[
         DROP INDEX t2b ON t2;
@@ -476,22 +476,22 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-5.100>
-    1, 2, true
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-5.100>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-5.101",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-5.101>
-    1, 2, true
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-5.101>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-5.102",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -500,7 +500,7 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-5.102>
-    1, 2, true
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-5.102>
     })
 
@@ -512,7 +512,7 @@ test:do_execsql_test(
 -- Because t2.b has a numeric affinity, type conversion should occur
 -- and the two fields should be equal.
 --
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-6.1",
     [[
         DROP TABLE t1;
@@ -529,33 +529,33 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-6.1>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-6.1>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-6.2",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE y=b;
     ]],
     {
     -- <whereB-6.2>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-6.2>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-6.3",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-6.3>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-6.3>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-6.4",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -564,11 +564,11 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-6.4>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-6.4>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-6.100",
     [[
         DROP INDEX t2b ON t2;
@@ -576,22 +576,22 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-6.100>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-6.100>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-6.101",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-6.101>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-6.101>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-6.102",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -600,7 +600,7 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-6.102>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-6.102>
     })
 
@@ -612,7 +612,7 @@ test:do_execsql_test(
 -- Because t1.y has a numeric affinity, type conversion should occur
 -- and the two fields should be equal.
 --
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-7.1",
     [[
         DROP TABLE t1;
@@ -629,33 +629,33 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-7.1>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-7.1>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-7.2",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE y=b;
     ]],
     {
     -- <whereB-7.2>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-7.2>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-7.3",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-7.3>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-7.3>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-7.4",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -664,11 +664,11 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-7.4>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-7.4>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-7.100",
     [[
         DROP INDEX t2b ON t2;
@@ -676,22 +676,22 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-7.100>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-7.100>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-7.101",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-7.101>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-7.101>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-7.102",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -700,7 +700,7 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-7.102>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-7.102>
     })
 
@@ -712,7 +712,7 @@ test:do_execsql_test(
 -- Because t1.y has a numeric affinity, type conversion should occur
 -- and the two fields should be equal.
 --
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-8.1",
     [[
         DROP TABLE t1;
@@ -729,33 +729,33 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-8.1>
-    1, 2, true
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-8.1>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-8.2",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE y=b;
     ]],
     {
     -- <whereB-8.2>
-    1, 2, true
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-8.2>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-8.3",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-8.3>
-    1, 2, true
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-8.3>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-8.4",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -764,11 +764,11 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-8.4>
-    1, 2, true
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-8.4>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-8.100",
     [[
         DROP INDEX t2b ON t2;
@@ -776,22 +776,22 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-8.100>
-    1, 2, true
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-8.100>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-8.101",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-8.101>
-    1, 2, true
+    1, "Type mismatch: can not convert unsigned to text"
     -- </whereB-8.101>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-8.102",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -800,7 +800,7 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-8.102>
-    1, 2, true
+    1, "Type mismatch: can not convert text to unsigned"
     -- </whereB-8.102>
     })
 
@@ -812,7 +812,7 @@ test:do_execsql_test(
 -- Because t1.y has a numeric affinity, type conversion should occur
 -- and the two fields should be equal.
 --
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-9.1",
     [[
         DROP TABLE t1;
@@ -829,33 +829,33 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-9.1>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-9.1>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-9.2",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE y=b;
     ]],
     {
     -- <whereB-9.2>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-9.2>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-9.3",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-9.3>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-9.3>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-9.4",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -864,11 +864,11 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-9.4>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-9.4>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-9.100",
     [[
         DROP INDEX t2b ON t2;
@@ -876,22 +876,22 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-9.100>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-9.100>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-9.101",
     [[
         SELECT x, a, y=b FROM t1, t2 WHERE b=y;
     ]],
     {
     -- <whereB-9.101>
-    1, 2, true
+    1, "Type mismatch: can not convert real to text"
     -- </whereB-9.101>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "whereB-9.102",
     -- In this case the unary "+" operator shouldn't
     -- affect result set of query.
@@ -900,7 +900,7 @@ test:do_execsql_test(
     ]],
     {
     -- <whereB-9.102>
-    1, 2, true
+    1, "Type mismatch: can not convert text to real"
     -- </whereB-9.102>
     })
 
