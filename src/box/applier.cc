@@ -731,8 +731,21 @@ applier_apply_tx(struct stailq *rows)
 	struct latch *latch = (replica ? &replica->order_latch :
 			       &replicaset.applier.order_latch);
 	latch_lock(latch);
-	if (vclock_get(&replicaset.applier.vclock,
-		       first_row->replica_id) >= first_row->lsn) {
+	/*
+	 * Skip remote rows either if one of the appliers has
+	 * sent them to write or if the rows originate from the
+	 * local instance and we've already synced with the
+	 * replica. The latter is important because relay gets
+	 * notified about WAL write before tx does, so it is
+	 * possible that a remote instance receives our rows
+	 * via replication before we update replicaset vclock and
+	 * even sends these rows back to us. An attemt to apply
+	 * such rows will lead to having entries with duplicate
+	 * LSNs in WAL.
+	 */
+	if (vclock_get(&replicaset.applier.vclock, first_row->replica_id) >=
+	    first_row->lsn || (first_row->replica_id == instance_id &&
+	    !box_is_orphan())) {
 		latch_unlock(latch);
 		return 0;
 	}

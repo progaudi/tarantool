@@ -93,7 +93,6 @@ replication_init(void)
 	latch_create(&replicaset.applier.order_latch);
 
 	vclock_create(&replicaset.applier.vclock);
-	vclock_copy(&replicaset.applier.vclock, &replicaset.vclock);
 	rlist_create(&replicaset.applier.on_rollback);
 	rlist_create(&replicaset.applier.on_commit);
 

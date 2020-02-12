@@ -2425,6 +2425,12 @@ box_cfg_xc(void)
 
 	rmean_cleanup(rmean_box);
 
+	/*
+	 * Local recovery is over so it's fine to update applier
+	 * vclock now.
+	 */
+	vclock_copy(&replicaset.applier.vclock, &replicaset.vclock);
+
 	/* Follow replica */
 	replicaset_follow();
 
