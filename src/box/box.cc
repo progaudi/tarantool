@@ -1871,7 +1871,7 @@ box_process_subscribe(struct ev_io *io, struct xrow_header *header)
 	 * indefinitely).
 	 */
 	relay_subscribe(replica, io->fd, header->sync, &replica_clock,
-			replica_version_id);
+			replica_version_id, &vclock);
 }
 
 void

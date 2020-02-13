@@ -676,7 +676,8 @@ relay_subscribe_f(va_list ap)
 /** Replication acceptor fiber handler. */
 void
 relay_subscribe(struct replica *replica, int fd, uint64_t sync,
-		struct vclock *replica_clock, uint32_t replica_version_id)
+		struct vclock *replica_clock, uint32_t replica_version_id,
+		struct vclock *clock_at_subscribe)
 {
 	assert(replica->anon || replica->id != REPLICA_ID_NIL);
 	struct relay *relay = replica->relay;
@@ -699,7 +700,15 @@ relay_subscribe(struct replica *replica, int fd, uint64_t sync,
 		replica_on_relay_stop(replica);
 	});
 
-	vclock_copy(&relay->local_vclock_at_subscribe, &replicaset.vclock);
+	/*
+	 * It's too late to remember replicaset.vclock as local
+	 * vclock at subscribe. It might have incremented while we
+	 * were writing a subscribe response, and we don't want to
+	 * replicate back rows originating from the replica and
+	 * having arrived later than replica has issued
+	 * SUBSCRIBE.
+	 */
+	vclock_copy(&relay->local_vclock_at_subscribe, clock_at_subscribe);
 	relay->r = recovery_new(cfg_gets("wal_dir"), false,
 			        replica_clock);
 	vclock_copy(&relay->tx.vclock, replica_clock);
