@@ -1194,7 +1194,7 @@ int
 xrow_encode_subscribe(struct xrow_header *row,
 		      const struct tt_uuid *replicaset_uuid,
 		      const struct tt_uuid *instance_uuid,
-		      const struct vclock *vclock, bool anon)
+		      const struct vclock *vclock, bool anon, bool is_orphan)
 {
 	memset(row, 0, sizeof(*row));
 	size_t size = XROW_BODY_LEN_MAX + mp_sizeof_vclock(vclock);
@@ -1204,7 +1204,7 @@ xrow_encode_subscribe(struct xrow_header *row,
 		return -1;
 	}
 	char *data = buf;
-	data = mp_encode_map(data, 5);
+	data = mp_encode_map(data, 6);
 	data = mp_encode_uint(data, IPROTO_CLUSTER_UUID);
 	data = xrow_encode_uuid(data, replicaset_uuid);
 	data = mp_encode_uint(data, IPROTO_INSTANCE_UUID);
@@ -1215,6 +1215,8 @@ xrow_encode_subscribe(struct xrow_header *row,
 	data = mp_encode_uint(data, tarantool_version_id());
 	data = mp_encode_uint(data, IPROTO_REPLICA_ANON);
 	data = mp_encode_bool(data, anon);
+	data = mp_encode_uint(data, IPROTO_REPLICA_IS_ORPHAN);
+	data = mp_encode_bool(data, is_orphan);
 	assert(data <= buf + size);
 	row->body[0].iov_base = buf;
 	row->body[0].iov_len = (data - buf);
@@ -1226,7 +1228,7 @@ xrow_encode_subscribe(struct xrow_header *row,
 int
 xrow_decode_subscribe(struct xrow_header *row, struct tt_uuid *replicaset_uuid,
 		      struct tt_uuid *instance_uuid, struct vclock *vclock,
-		      uint32_t *version_id, bool *anon)
+		      uint32_t *version_id, bool *anon, bool *is_orphan)
 {
 	if (row->bodycnt == 0) {
 		diag_set(ClientError, ER_INVALID_MSGPACK, "request body");
@@ -1300,6 +1302,16 @@ xrow_decode_subscribe(struct xrow_header *row, struct tt_uuid *replicaset_uuid,
 				return -1;
 			}
 			*anon = mp_decode_bool(&d);
+			break;
+		case IPROTO_REPLICA_IS_ORPHAN:
+			if (is_orphan == NULL)
+				goto skip;
+			if (mp_typeof(*d) != MP_BOOL) {
+				xrow_on_decode_err(data, end, ER_INVALID_MSGPACK,
+						   "invalid REPLICA_IS_ORPHAN flag");
+				return -1;
+			}
+			*is_orphan = mp_decode_bool(&d);
 			break;
 		default: skip:
 			mp_next(&d); /* value */

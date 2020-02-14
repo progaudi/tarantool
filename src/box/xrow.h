@@ -322,6 +322,7 @@ xrow_encode_register(struct xrow_header *row,
  * @param instance_uuid Instance uuid.
  * @param vclock Replication clock.
  * @param anon Whether it is an anonymous subscribe request or not.
+ * @param is_orphan Whether the instance is in orphan mode.
  *
  * @retval  0 Success.
  * @retval -1 Memory error.
@@ -330,7 +331,7 @@ int
 xrow_encode_subscribe(struct xrow_header *row,
 		      const struct tt_uuid *replicaset_uuid,
 		      const struct tt_uuid *instance_uuid,
-		      const struct vclock *vclock, bool anon);
+		      const struct vclock *vclock, bool anon, bool is_orphan);
 
 /**
  * Decode SUBSCRIBE command.
@@ -347,7 +348,7 @@ xrow_encode_subscribe(struct xrow_header *row,
 int
 xrow_decode_subscribe(struct xrow_header *row, struct tt_uuid *replicaset_uuid,
 		      struct tt_uuid *instance_uuid, struct vclock *vclock,
-		      uint32_t *version_id, bool *anon);
+		      uint32_t *version_id, bool *anon, bool *is_orphan);
 
 /**
  * Encode JOIN command.
@@ -371,7 +372,8 @@ xrow_encode_join(struct xrow_header *row, const struct tt_uuid *instance_uuid);
 static inline int
 xrow_decode_join(struct xrow_header *row, struct tt_uuid *instance_uuid)
 {
-	return xrow_decode_subscribe(row, NULL, instance_uuid, NULL, NULL, NULL);
+	return xrow_decode_subscribe(row, NULL, instance_uuid, NULL, NULL, NULL,
+				     NULL);
 }
 
 /**
@@ -386,7 +388,8 @@ static inline int
 xrow_decode_register(struct xrow_header *row, struct tt_uuid *instance_uuid,
 		     struct vclock *vclock)
 {
-	return xrow_decode_subscribe(row, NULL, instance_uuid, vclock, NULL, NULL);
+	return xrow_decode_subscribe(row, NULL, instance_uuid, vclock, NULL,
+				     NULL, NULL);
 }
 
 /**
@@ -411,7 +414,7 @@ xrow_encode_vclock(struct xrow_header *row, const struct vclock *vclock);
 static inline int
 xrow_decode_vclock(struct xrow_header *row, struct vclock *vclock)
 {
-	return xrow_decode_subscribe(row, NULL, NULL, vclock, NULL, NULL);
+	return xrow_decode_subscribe(row, NULL, NULL, vclock, NULL, NULL, NULL);
 }
 
 /**
@@ -442,7 +445,8 @@ xrow_decode_subscribe_response(struct xrow_header *row,
 			       struct tt_uuid *replicaset_uuid,
 			       struct vclock *vclock)
 {
-	return xrow_decode_subscribe(row, replicaset_uuid, NULL, vclock, NULL, NULL);
+	return xrow_decode_subscribe(row, replicaset_uuid, NULL, vclock, NULL,
+				     NULL, NULL);
 }
 
 /**
@@ -817,10 +821,10 @@ static inline void
 xrow_encode_subscribe_xc(struct xrow_header *row,
 			 const struct tt_uuid *replicaset_uuid,
 			 const struct tt_uuid *instance_uuid,
-			 const struct vclock *vclock, bool anon)
+			 const struct vclock *vclock, bool anon, bool is_orphan)
 {
 	if (xrow_encode_subscribe(row, replicaset_uuid, instance_uuid,
-				  vclock, anon) != 0)
+				  vclock, anon, is_orphan) != 0)
 		diag_raise();
 }
 
@@ -829,10 +833,12 @@ static inline void
 xrow_decode_subscribe_xc(struct xrow_header *row,
 			 struct tt_uuid *replicaset_uuid,
 		         struct tt_uuid *instance_uuid, struct vclock *vclock,
-			 uint32_t *replica_version_id, bool *anon)
+			 uint32_t *replica_version_id, bool *anon,
+			 bool *is_orphan)
 {
 	if (xrow_decode_subscribe(row, replicaset_uuid, instance_uuid,
-				  vclock, replica_version_id, anon) != 0)
+				  vclock, replica_version_id, anon,
+				  is_orphan) != 0)
 		diag_raise();
 }
 

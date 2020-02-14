@@ -676,7 +676,8 @@ relay_subscribe_f(va_list ap)
 /** Replication acceptor fiber handler. */
 void
 relay_subscribe(struct replica *replica, int fd, uint64_t sync,
-		struct vclock *replica_clock, uint32_t replica_version_id)
+		struct vclock *replica_clock, uint32_t replica_version_id,
+		bool replica_is_orphan)
 {
 	assert(replica->anon || replica->id != REPLICA_ID_NIL);
 	struct relay *relay = replica->relay;
@@ -700,8 +701,15 @@ relay_subscribe(struct replica *replica, int fd, uint64_t sync,
 	});
 
 	vclock_copy(&relay->local_vclock_at_subscribe, &replicaset.vclock);
+	/*
+	 * If the remote instance is already synced, don't relay
+	 * the instance's rows back to it. In order to do so,
+	 * make recovery silently skip rows originating from the
+	 * instance.
+	 */
 	relay->r = recovery_new(cfg_gets("wal_dir"), false,
-			        replica_clock, 0);
+			        replica_clock, replica_is_orphan ?
+					       0 : 1 << replica->id);
 	vclock_copy(&relay->tx.vclock, replica_clock);
 	relay->version_id = replica_version_id;
 
