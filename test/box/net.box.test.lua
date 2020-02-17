@@ -1574,6 +1574,31 @@ data = string.fromhex('3C'..string.rep(require('digest').sha1_hex('bcde'), 3))
 sock:write(data)
 sock:close()
 
+-- gh-1148: test stacked diagnostics.
+--
+test_run:cmd("push filter \"file: .*\" to \"file: <filename>\"")
+test_run:cmd("setopt delimiter ';'")
+lua_code = [[function(tuple) local json = require('json') return json.encode(tuple) end]]
+test_run:cmd("setopt delimiter ''");
+box.schema.func.create('f1', {body = lua_code, is_deterministic = true, is_sandboxed = true})
+s = box.schema.space.create('s')
+pk = s:create_index('pk')
+idx = s:create_index('idx', {func = box.func.f1.id, parts = {{1, 'string'}}})
+
+box.schema.user.grant('guest', 'read,write,execute', 'universe')
+c = net.connect(box.cfg.listen)
+f = function(...) return c.space.s:insert(...) end
+_, e = pcall(f, {1})
+assert(e ~= nil)
+
+e:unpack().message
+e.prev:unpack().message
+
+box.schema.user.revoke('guest', 'read,write,execute', 'universe')
+s:drop()
+box.func.f1:drop()
+test_run:cmd("clear filter")
+
 test_run:wait_log('default', 'Got a corrupted row.*', nil, 10)
 test_run:wait_log('default', '00000000:.*', nil, 10)
 test_run:wait_log('default', '00000010:.*', nil, 10)

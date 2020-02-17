@@ -138,6 +138,22 @@ box_error_construct(const char *file, unsigned line, uint32_t code,
 		    const char *fmt, ...);
 
 /**
+ * Add error to the diagnostic area. In contrast to box_error_set()
+ * it does not replace previous error being set, but rather link
+ * them into list.
+ *
+ * \param code IPROTO error code (enum \link box_error_code \endlink)
+ * \param format (const char * ) - printf()-like format string
+ * \param ... - format arguments
+ * \returns -1 for convention use
+ *
+ * \sa enum box_error_code
+ */
+int
+box_error_add(const char *file, unsigned line, uint32_t code,
+	      const char *fmt, ...);
+
+/**
  * A backward-compatible API define.
  */
 #define box_error_raise(code, format, ...) \

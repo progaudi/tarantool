@@ -3902,6 +3902,71 @@ sock:close()
 ---
 - true
 ...
+-- gh-1148: test stacked diagnostics.
+--
+test_run:cmd("push filter \"file: .*\" to \"file: <filename>\"")
+---
+- true
+...
+test_run:cmd("setopt delimiter ';'")
+---
+- true
+...
+lua_code = [[function(tuple) local json = require('json') return json.encode(tuple) end]]
+test_run:cmd("setopt delimiter ''");
+---
+...
+box.schema.func.create('f1', {body = lua_code, is_deterministic = true, is_sandboxed = true})
+---
+...
+s = box.schema.space.create('s')
+---
+...
+pk = s:create_index('pk')
+---
+...
+idx = s:create_index('idx', {func = box.func.f1.id, parts = {{1, 'string'}}})
+---
+...
+box.schema.user.grant('guest', 'read,write,execute', 'universe')
+---
+...
+c = net.connect(box.cfg.listen)
+---
+...
+f = function(...) return c.space.s:insert(...) end
+---
+...
+_, e = pcall(f, {1})
+---
+...
+assert(e ~= nil)
+---
+- true
+...
+e:unpack().message
+---
+- 'Failed to build a key for functional index ''idx'' of space ''s'': can''t evaluate
+  function'
+...
+e.prev:unpack().message
+---
+- '[string "return function(tuple) local json = require(''..."]:1: attempt to call
+  global ''require'' (a nil value)'
+...
+box.schema.user.revoke('guest', 'read,write,execute', 'universe')
+---
+...
+s:drop()
+---
+...
+box.func.f1:drop()
+---
+...
+test_run:cmd("clear filter")
+---
+- true
+...
 test_run:wait_log('default', 'Got a corrupted row.*', nil, 10)
 ---
 - 'Got a corrupted row:'
