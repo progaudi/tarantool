@@ -246,6 +246,8 @@ clock_monotonic64
 clock_process64
 clock_thread64
 string_strip_helper
+error_prev
+error_set_prev
 
 # Lua / LuaJIT
 

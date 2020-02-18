@@ -34,6 +34,56 @@
 /* Must be set by the library user */
 struct error_factory *error_factory = NULL;
 
+struct error *
+error_prev(struct error *e)
+{
+	assert(e != NULL);
+	return e->next;
+}
+
+int
+error_set_prev(struct error *e, struct error *prev)
+{
+	/*
+	 * Make sure that adding error won't result in cycles.
+	 * Don't bother with sophisticated cycle-detection
+	 * algorithms, simple iteration is OK since as a rule
+	 * list contains a dozen errors at maximum.
+	 */
+	struct error *tmp = prev;
+	while (tmp != NULL) {
+		if (tmp == e)
+			return -1;
+		tmp = tmp->next;
+	}
+	/*
+	 * At once error can be reason for only one error.
+	 * So unlink previous 'prev' node.
+	 *
+	 * +--------+ NEXT +--------+
+	 * |    e   | ---> |old prev|
+	 * +--------+      +--------+
+	 *     ^               |
+	 *     |      PREV     |
+	 *     +-------X-------+
+	 *
+	 */
+	if (e->next != NULL)
+		e->next->prev = NULL;
+	/* Set new 'prev' node. */
+	e->next = prev;
+	/*
+	 * Unlink new 'prev' node from its old stack.
+	 * nil can be also passed as an argument.
+	 */
+	if (prev != NULL) {
+		error_unlink_tail(prev);
+		prev->prev = e;
+		error_ref(prev);
+	}
+	return 0;
+}
+
 void
 error_create(struct error *e,
 	     error_f destroy, error_f raise, error_f log,
@@ -53,6 +103,8 @@ error_create(struct error *e,
 		e->line = 0;
 	}
 	e->errmsg[0] = '\0';
+	e->prev = NULL;
+	e->next = NULL;
 }
 
 struct diag *

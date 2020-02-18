@@ -1,5 +1,6 @@
 test_run = require('test_run').new()
 engine = test_run:get_cfg('engine')
+test_run:cmd("push filter \"file: .*\" to \"file: <filename>\"")
 
 --
 -- gh-1260: Func index.
@@ -99,6 +100,12 @@ test_run:cmd("setopt delimiter ''");
 box.schema.func.create('runtimeerror', {body = lua_code, is_deterministic = true, is_sandboxed = true})
 idx = s:create_index('idx', {func = box.func.runtimeerror.id, parts = {{1, 'string'}}})
 s:insert({1})
+e = box.error.last()
+e:unpack()
+e = e.prev
+e:unpack()
+e = e.prev
+e == nil
 idx:drop()
 
 -- Remove old persistent functions
