@@ -81,7 +81,7 @@
  */
 struct recovery *
 recovery_new(const char *wal_dirname, bool force_recovery,
-	     const struct vclock *vclock)
+	     const struct vclock *vclock, unsigned int id_ignore_map)
 {
 	struct recovery *r = (struct recovery *)
 			calloc(1, sizeof(*r));
@@ -100,6 +100,8 @@ recovery_new(const char *wal_dirname, bool force_recovery,
 	r->wal_dir.force_recovery = force_recovery;
 
 	vclock_copy(&r->vclock, vclock);
+
+	r->id_ignore_map = id_ignore_map;
 
 	/**
 	 * Avoid scanning WAL dir before we recovered
@@ -275,6 +277,14 @@ recover_xlog(struct recovery *r, struct xstream *stream,
 		 * failed row anyway.
 		 */
 		vclock_follow_xrow(&r->vclock, &row);
+		/*
+		 * Do not try to apply rows coming from an
+		 * ignored instance, but still follow their lsns
+		 * to make sure recovery vclock stays the same as
+		 * the one emerging from local recovery.
+		 */
+		if (1 << row.replica_id & r->id_ignore_map)
+			continue;
 		if (xstream_write(stream, &row) == 0) {
 			++row_count;
 			if (row_count % 100000 == 0)

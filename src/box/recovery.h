@@ -51,6 +51,11 @@ struct recovery {
 	struct xlog_cursor cursor;
 	struct xdir wal_dir;
 	/**
+	 * A map of replica ids whose changes will be silently
+	 * ignored on recovery.
+	 */
+	unsigned int id_ignore_map;
+	/**
 	 * This fiber is used in local hot standby mode.
 	 * It looks for changes in the wal_dir and applies
 	 * them locally.
@@ -62,7 +67,7 @@ struct recovery {
 
 struct recovery *
 recovery_new(const char *wal_dirname, bool force_recovery,
-	     const struct vclock *vclock);
+	     const struct vclock *vclock, unsigned int id_ignore_map);
 
 void
 recovery_delete(struct recovery *r);

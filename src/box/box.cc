@@ -2171,7 +2171,7 @@ local_recovery(const struct tt_uuid *instance_uuid,
 	struct recovery *recovery;
 	recovery = recovery_new(cfg_gets("wal_dir"),
 				cfg_geti("force_recovery"),
-				checkpoint_vclock);
+				checkpoint_vclock, 0);
 
 	/*
 	 * Make sure we report the actual recovery position
