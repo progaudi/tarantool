@@ -1431,3 +1431,43 @@ test_run:grep_log('default', 'test log')
 ---
 - test log
 ...
+--
+-- gh-4770: Iteration through space with Lua builtin pairs routine
+--
+box.cfg{}
+---
+...
+s = box.schema.create_space('test')
+---
+...
+-- Check whether __pairs is set for the space object, since Lua Fun
+-- handles it manually underneath.
+getmetatable(s).__pairs == space.pairs
+---
+- true
+...
+-- Check whether pairs builtin behaviour doesn't change when the
+-- __pairs is set.
+keys = {}
+---
+...
+for k, v in pairs(s) do keys[k] = true end
+---
+...
+keys
+---
+- engine: true
+  before_replace: true
+  field_count: true
+  id: true
+  on_replace: true
+  temporary: true
+  index: true
+  is_local: true
+  enabled: true
+  name: true
+  ck_constraint: true
+...
+s:drop()
+---
+...

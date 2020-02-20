@@ -415,3 +415,18 @@ tuple_format = box.internal.new_tuple_format(format)
 box.cfg{}
 local ffi = require'ffi' ffi.C._say(ffi.C.S_WARN, nil, 0, nil, "%s", "test log")
 test_run:grep_log('default', 'test log')
+
+--
+-- gh-4770: Iteration through space with Lua builtin pairs routine
+--
+box.cfg{}
+s = box.schema.create_space('test')
+-- Check whether __pairs is set for the space object, since Lua Fun
+-- handles it manually underneath.
+getmetatable(s).__pairs == space.pairs
+-- Check whether pairs builtin behaviour doesn't change when the
+-- __pairs is set.
+keys = {}
+for k, v in pairs(s) do keys[k] = true end
+keys
+s:drop()
