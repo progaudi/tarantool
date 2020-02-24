@@ -338,7 +338,10 @@ sql_ephemeral_space_create(uint32_t field_count, struct sql_key_info *key_info)
 		return NULL;
 	}
 	for (uint32_t i = 0; i < field_count; ++i) {
-		struct key_part_def *part = &ephemer_key_parts[i];
+		uint32_t j = i;
+		if (key_info != NULL && key_info->is_rowid_first)
+			j = (j + 1) % field_count;
+		struct key_part_def *part = &ephemer_key_parts[j];
 		part->fieldno = i;
 		part->nullable_action = ON_CONFLICT_ACTION_NONE;
 		part->is_nullable = true;

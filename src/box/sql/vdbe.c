@@ -2702,8 +2702,25 @@ case OP_Column: {
 		 * key parts.
 		 */
 		if (pC->uc.pCursor->curFlags & BTCF_TEphemCursor) {
-			field_type = pC->uc.pCursor->index->def->
-					key_def->parts[p2].type;
+			struct key_def *key_def =
+				pC->uc.pCursor->index->def->key_def;
+			/*
+			 * There are three options:
+			 * |Rowid|First field|...|Last field|
+			 * Or:
+			 * |First field|...|Last field|
+			 * Or:
+			 * |First field|...|Last field|Rowid|
+			 *
+			 * If ephemeral space has a rowid column,
+			 * it is always the last column. Due to
+			 * this, the field number of the rowid
+			 * column cannot be 0.
+			 */
+			int partno = p2;
+			if (key_def->parts[0].fieldno != 0)
+				partno = (partno + 1) % key_def->part_count;
+			field_type = key_def->parts[partno].type;
 		} else if (pC->uc.pCursor->curFlags & BTCF_TaCursor) {
 			field_type = pC->uc.pCursor->space->def->
 					fields[p2].type;

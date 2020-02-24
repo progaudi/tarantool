@@ -31,3 +31,13 @@ seqs = box.space._sequence:select{}
 #seqs == 0 or seqs
 
 box.schema.user.drop('user1')
+
+--
+-- gh-4256: make sure that when inserting, values are inserted in
+-- the given order when ephemeral space is used.
+--
+box.execute('CREATE TABLE t (i INT PRIMARY KEY AUTOINCREMENT);')
+box.execute('CREATE TRIGGER r AFTER INSERT ON t FOR EACH ROW BEGIN SELECT 1; END')
+box.execute('INSERT INTO t VALUES (1), (NULL), (10), (NULL), (NULL), (3), (NULL);')
+box.execute('SELECT * FROM t;')
+box.execute('DROP TABLE t;')
