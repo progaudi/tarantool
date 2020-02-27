@@ -54,6 +54,7 @@ evals
   - ERRINJ_HTTP_RESPONSE_ADD_WAIT: false
   - ERRINJ_INDEX_ALLOC: false
   - ERRINJ_IPROTO_TX_DELAY: false
+  - ERRINJ_JOURNAL_NEW: false
   - ERRINJ_LOG_ROTATE: false
   - ERRINJ_MEMTX_DELAY_GC: false
   - ERRINJ_PORT_DUMP: false
@@ -133,6 +134,25 @@ space:select{222444}
 errinj.set("ERRINJ_TESTING", false)
 ---
 - ok
+...
+-- Check journal entries allocation failure
+errinj.set("ERRINJ_JOURNAL_NEW", true)
+---
+- ok
+...
+space:insert{1}
+---
+- error: Failed to allocate 0 bytes in region for journal_entry
+...
+space:get{1}
+---
+...
+errinj.set("ERRINJ_JOURNAL_NEW", false)
+---
+- ok
+...
+space:truncate()
+---
 ...
 -- Check how well we handle a failed log write
 errinj.set("ERRINJ_WAL_IO", true)

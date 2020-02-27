@@ -520,6 +520,7 @@ txn_write_to_wal(struct txn *txn)
 	assert(local_row == remote_row + txn->n_new_rows);
 
 	/* Send the entry to the journal. */
+	fiber_set_txn(fiber(), NULL);
 	if (journal_write(req) < 0) {
 		diag_set(ClientError, ER_WAL_IO);
 		diag_log();
@@ -583,7 +584,6 @@ txn_commit_async(struct txn *txn)
 		fiber_set_txn(fiber(), NULL);
 		return 0;
 	}
-	fiber_set_txn(fiber(), NULL);
 	return txn_write_to_wal(txn);
 }
 

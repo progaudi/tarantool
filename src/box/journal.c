@@ -29,6 +29,7 @@
  * SUCH DAMAGE.
  */
 #include "journal.h"
+#include "errinj.h"
 #include <small/region.h>
 #include <diag.h>
 
@@ -61,6 +62,11 @@ journal_entry_new(size_t n_rows, struct region *region,
 
 	size_t size = (sizeof(struct journal_entry) +
 		       sizeof(entry->rows[0]) * n_rows);
+
+	ERROR_INJECT(ERRINJ_JOURNAL_NEW, {
+		diag_set(OutOfMemory, 0, "region", "journal_entry");
+		return NULL;
+	});
 
 	entry = region_aligned_alloc(region, size,
 				     alignof(struct journal_entry));

@@ -30,6 +30,13 @@ errinj.set("ERRINJ_TESTING", true)
 space:select{222444}
 errinj.set("ERRINJ_TESTING", false)
 
+-- Check journal entries allocation failure
+errinj.set("ERRINJ_JOURNAL_NEW", true)
+space:insert{1}
+space:get{1}
+errinj.set("ERRINJ_JOURNAL_NEW", false)
+space:truncate()
+
 -- Check how well we handle a failed log write
 errinj.set("ERRINJ_WAL_IO", true)
 space:insert{1}
