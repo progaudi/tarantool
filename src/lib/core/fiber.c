@@ -1463,7 +1463,7 @@ cord_start(struct cord *cord, const char *name, void *(*f)(void *), void *arg)
 	struct cord_thread_arg ct_arg = { cord, name, f, arg, false,
 		PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER };
 	tt_pthread_mutex_lock(&ct_arg.start_mutex);
-	cord->loop = ev_loop_new(EVFLAG_AUTO | EVFLAG_ALLOCFD);
+	cord->loop = ev_loop_new(EVFLAG_AUTO | EVFLAG_NOTIMERFD);
 	if (cord->loop == NULL) {
 		diag_set(OutOfMemory, 0, "ev_loop_new", "ev_loop");
 		goto end;
@@ -1701,7 +1701,7 @@ fiber_init(int (*invoke)(fiber_func f, va_list ap))
 	stack_direction = check_stack_direction(__builtin_frame_address(0));
 	fiber_invoke = invoke;
 	main_thread_id = pthread_self();
-	main_cord.loop = ev_default_loop(EVFLAG_AUTO | EVFLAG_ALLOCFD);
+	main_cord.loop = ev_default_loop(EVFLAG_AUTO | EVFLAG_NOTIMERFD);
 	cord_create(&main_cord, "main");
 }
 
