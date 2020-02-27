@@ -604,8 +604,10 @@ txn_commit(struct txn *txn)
 		fiber_set_cancellable(cancellable);
 	}
 	int res = txn->signature >= 0 ? 0 : -1;
-	if (res != 0)
+	if (res != 0) {
 		diag_set(ClientError, ER_WAL_IO);
+		diag_log();
+	}
 
 	/* Synchronous transactions are freed by the calling fiber. */
 	txn_free(txn);
