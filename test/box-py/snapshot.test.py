@@ -57,7 +57,11 @@ snapshot = os.path.join(os.path.join(server.vardir, server.name), snapshot)
 
 iteration = 0
 
-MAX_ITERATIONS = 100
+#
+# Lets wait for 2 minutes to complete checkpoint process,
+# the OS may be loaded too much, we already got cases when
+# the test doesn't pass due to timeouts.
+MAX_ITERATIONS = 12000
 while not os.access(snapshot, os.F_OK) and iteration < MAX_ITERATIONS:
   if iteration % 10 == 0:
     os.kill(pid, SIGUSR1)
