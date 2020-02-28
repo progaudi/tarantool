@@ -287,6 +287,20 @@ print 'Schema changed -> error:', resp['header'][0] != 0
 print 'Got another schema_id:', resp['header'][5] != schema_id
 
 #
+# gh-4769 Unprepare response must have a body.
+#
+IPROTO_PREPARE = 13
+IPROTO_SQL_TEXT = 0x40
+IPROTO_STMT_ID = 0x43
+
+header = { IPROTO_CODE : IPROTO_PREPARE }
+body = { IPROTO_SQL_TEXT : 'SELECT 1' }
+resp = test_request(header, body)
+
+body = { IPROTO_STMT_ID : resp['body'][IPROTO_STMT_ID] }
+resp = test_request(header, body)
+
+#
 # gh-2334 Lost SYNC in JOIN response.
 #
 uuid = '0d5bd431-7f3e-4695-a5c2-82de0a9cbc95'
