@@ -53,7 +53,7 @@ popen_write_exit(void)
 			POPEN_FLAG_FD_STDERR		|
 			TEST_POPEN_COMMON_FLAGS,
 	};
-	int rc = -1;
+	int rc;
 
 	plan(7);
 	header();
@@ -123,7 +123,7 @@ popen_read_exit(void)
 			POPEN_FLAG_FD_STDERR		|
 			TEST_POPEN_COMMON_FLAGS,
 	};
-	int rc = -1;
+	int rc;
 
 	plan(5);
 	header();
@@ -181,7 +181,7 @@ popen_kill(void)
 			POPEN_FLAG_FD_STDERR		|
 			TEST_POPEN_COMMON_FLAGS,
 	};
-	int rc = -1;
+	int rc;
 
 	plan(4);
 	header();
