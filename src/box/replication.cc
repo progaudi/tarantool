@@ -768,8 +768,19 @@ replicaset_needs_rejoin(struct replica **master)
 	struct replica *leader = NULL;
 	replicaset_foreach(replica) {
 		struct applier *applier = replica->applier;
-		if (applier == NULL)
+		/*
+		 * The function is called right after
+		 * box_sync_replication(), which in turn calls
+		 * replicaset_connect(), which ensures that
+		 * appliers are either stopped (APPLIER OFF) or
+		 * connected.
+		 * Also ignore self, as self applier might not
+		 * have disconnected yet.
+		 */
+		if (applier == NULL || applier->state == APPLIER_OFF ||
+		    tt_uuid_is_equal(&replica->uuid, &INSTANCE_UUID))
 			continue;
+		assert(applier->state == APPLIER_CONNECTED);
 
 		const struct ballot *ballot = &applier->ballot;
 		if (vclock_compare(&ballot->gc_vclock,
