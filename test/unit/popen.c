@@ -97,7 +97,7 @@ out_kill:
 
 out:
 	footer();
-	return rc | check_plan();
+	return check_plan();
 }
 
 static int
@@ -156,7 +156,7 @@ out_kill:
 
 out:
 	footer();
-	return rc | check_plan();
+	return check_plan();
 }
 
 static int
@@ -209,7 +209,7 @@ out_kill:
 
 out:
 	footer();
-	return rc | check_plan();
+	return check_plan();
 }
 
 static int
@@ -217,14 +217,15 @@ main_f(va_list ap)
 {
 	int rc = 0;
 
-	rc |= popen_write_exit();
-	rc |= popen_read_exit();
-	rc |= popen_kill();
+	rc = popen_write_exit();
+	if (rc == 0)
+		rc = popen_read_exit();
+	if (rc == 0)
+		rc = popen_kill();
 
 	ev_break(loop(), EVBREAK_ALL);
 	return 0;
 }
-
 
 int
 main(int argc, char *argv[])
