@@ -1,5 +1,6 @@
 # Tarantool
 
+TEST
 [![Build Status][travis-badge]][travis-url]
 [![Build Status][gitlab-ci-badge]][gitlab-ci-url]
 [![Code Coverage][coverage-badge]][coverage-url]
